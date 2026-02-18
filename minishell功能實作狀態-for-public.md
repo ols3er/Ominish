@@ -1,6 +1,6 @@
-# minishell 功能實作狀態
+# OB2D Linux 專屬 minishell -> ominish 功能實作狀態
 
-本文件整理目前 ominish minishell 已實作的各項功能。
+本文件整理目前 ominish 已實作的各項功能。
 
 ---
 
@@ -96,10 +96,17 @@
 - **`~`** / **`～`**（全形）：`~` → HOME，`~/path` → HOME + "/path"
 - **`$HOME`**：環境變數 HOME 展開
 
-### 12. 內建指令
+### 12. 內建指令（builtins/）
 
 - **cd**：cd、cd ~、cd $HOME、cd ~/dir、錯誤處理
 - **echo**：標準 echo 行為
+- **export**：`export VAR=value` 或 `export VAR`，將變數加入環境供子行程繼承；單獨 `export` 無參數時列出所有全域變數及其內容
+- **env**：`env` 無參數印出所有已導出的環境變數；`env VAR=VAL command` 以臨時環境執行 command，不影響當前 Shell
+- **printenv**：`printenv VAR1 VAR2` 只印出指定變數的內容（值），不顯示變數名稱；無參數印出所有
+- **unset**：`unset VAR1 VAR2` 從 env_map 完全移除變數；唯讀變數（$?、$HOME）不可 unset
+- **eval**：`eval arg1 arg2 ...` 將參數以空白連接後重新解析執行；支援二次展開、&&/||、if/while/for；遞迴深度限制 16；狀態變更影響當前 Shell
+  - 單雙引號皆支援：`eval "x=1; echo $x"`、`eval 'x=1; echo $x'` → 輸出 `1`
+  - `a=b; b=10; eval echo '$'$a` → 輸出 `10`
 
 ### 13. 行編輯與歷史
 
@@ -117,12 +124,29 @@
 
 ### 15. 模組化架構
 
-- 指令與職責拆至不同模組
-- 內建指令獨立於子目錄
+- 指令與職責拆至不同模組（見 PROJECT_STRUCTURE.md）
+- 內建指令置於 `builtins/` 子目錄
 
 ---
 
-## 二、測試範例（快速驗證）
+## 二、模組對照
+
+| 模組 | 主要功能 |
+|------|----------|
+| - | stripComments, splitByLogic, parseIfBlock, parseWhileBlock, parseForBlock, splitCommands, tokenizeWithQuotes |
+| - | [[ ]] 求值：二元比較、-z/-n、-e/-f/-d、=~ regex、glob |
+| - | Perl-style regex 比對 |
+| - | REPL 主迴圈、runCommandBody、processStatements、if/while/for 塊處理、eval、break/continue |
+| - | 執行單一命令（(( ))、[[ ]]、內建、衍生行程） |
+| - | $(( )) 與 (( )) 算術 |
+| - | 變數展開、賦值、$?、parseConditionalCommand |
+| - | readLineWithCursor、方向鍵、Backspace |
+| - | 命令歷史與上下鍵導覽 |
+| - | cd、echo、export、env、printenv、unset 分發 |
+
+---
+
+## 三、測試範例（快速驗證）
 
 ```bash
 # 註解
@@ -151,6 +175,21 @@ x=5; echo $(( x++ )); echo $x
 
 # cd 與路徑
 cd ~; echo $HOME; ls ~/
+
+# export 與 env
+export MYVAR=hello; echo $MYVAR
+export
+env
+env MYVAR=world echo $MYVAR
+echo $MYVAR
+printenv MYVAR HOME
+printenv
+unset MYVAR; echo "MYVAR=$MYVAR"
+unset '?'   # 唯讀，會印出錯誤
+unset 'HOME'   # 唯讀，會印出錯誤
+eval echo hello
+a=b; b=10; eval echo '$'$a
+eval "cd .."
 
 # 正則
 [[ abc =~ a.* ]]; echo $?
