@@ -117,11 +117,25 @@
 - **env**：`env` 無參數印出所有已導出的環境變數；`env VAR=VAL command` 以臨時環境執行 command，不影響當前 Shell
 - **printenv**：`printenv VAR1 VAR2` 只印出指定變數的內容（值），不顯示變數名稱；無參數印出所有
 - **unset**：`unset VAR1 VAR2` 從 env_map 完全移除變數；唯讀變數（$?、$HOME）不可 unset
+- **stock**：`stock 買入價 賣出價` 計算股票收益（手續費 0.1425%、交易稅 0.3%、每張 1000 股）；`stock(100,110)` 單獨指令或 `$(( stock(100,110) ))` 僅輸出收益數值
 - **eval**：`eval arg1 arg2 ...` 將參數以空白連接後重新解析執行；支援二次展開、&&/||、if/while/for；遞迴深度限制 16；狀態變更影響當前 Shell
   - 單雙引號皆支援：`eval "x=1; echo $x"`、`eval 'x=1; echo $x'` → 輸出 `1`
   - `a=b; b=10; eval echo '$'$a` → 輸出 `10`
 
-### 13. 行編輯與歷史
+### 13. I/O 重定向
+
+- **`>`**：輸出覆蓋寫入檔案（`O_WRONLY | O_CREAT | O_TRUNC`）
+- **`>>`**：輸出追加寫入檔案（`O_WRONLY | O_CREAT | O_APPEND`）
+- **`<`**：標準輸入從檔案讀取（`O_RDONLY`）
+- 重定向符號可出現在命令任意位置（如 `> out ls` 或 `ls > out`）
+- 檔名支援變數展開（如 `ls > $HOME/list.txt`）
+- **外部命令**：使用 `dup2()` 在 fork 後、execve 前設定子行程的 stdin/stdout（`execWithRedirect`）
+- **內建指令**：使用 `dup()` 保存原 fd、`dup2()` 套用重定向、執行內建、`restore()` 恢復（`applyForBuiltin` + `BuiltinRedirectGuard`）
+- 新建檔案權限 0644；重定向失敗時 `$?` 為非 0
+- **注意**：`>`、`>>`、`<` 與檔名之間需有空白（例如 `ls > out`）；`ls>out` 尚未支援
+- **內建指令支援重定向**：`echo hello > out`、`echo x >> log`、`printenv VAR > env.txt`、`export VAR=val > env.txt` 等皆可
+
+### 14. 行編輯與歷史
 
 - **Raw 模式**：關閉 ICANON、ECHO，逐字讀取
 - **左右方向鍵**：ESC [ C / ESC [ D，游標移動
@@ -129,13 +143,13 @@
 - **上下鍵**：歷史導覽（getPrevious / getNext）
 - 非 TTY 時自動改用 readUntilDelimiterOrEof
 
-### 14. Backspace 處理
+### 15. Backspace 處理
 
 - 僅在 move_left > 0 時送出 `\x1b[{n}D`
 - termios 僅關閉 ICANON 與 ECHO
 - just_backspace 保留以略過 BS+SP 序列中夾帶的 space
 
-### 15. Tab 自動補全
+### 16. Tab 自動補全
 
 - **觸發**：在 readLineWithCursor 循環中捕獲 `\t`（Tab）
 - **上下文識別**：自游標向左搜尋空白，提取半成品單詞；行首補全指令，非行首補全路徑，`$` 開頭補全變數，`${arr[` 補全陣列索引
@@ -146,7 +160,7 @@
 - **多重匹配**：先補全公共前綴；無進展時以 ls 風格單行列出候選（空白分隔），最多 100 項
 - **無匹配**：蜂鳴
 
-### 16. 模組化架構
+### 17. 模組化架構
 
 - 指令與職責拆至不同模組（見 PROJECT_STRUCTURE.md）
 - 內建指令置於 `builtins/` 子目錄
@@ -161,13 +175,14 @@
 | - | [[ ]] 求值：二元比較、-z/-n、-e/-f/-d、=~ regex、glob |
 | - | Perl-style regex 比對 |
 | - | REPL 主迴圈、runCommandBody、processStatements、if/while/for 塊處理、eval、break/continue |
-| - | 執行單一命令（(( ))、[[ ]]、內建、衍生行程） |
-| - | $(( )) 與 (( )) 算術 |
+| - | 執行單一命令（(( ))、[[ ]]、內建、衍生行程）；與 redirect 整合，重定向時調用 execWithRedirect 或 applyForBuiltin |
+| - | $(( )) 與 (( )) 算術；內建 stock(buy,sell) 函式 |
 | - | 變數展開、賦值、$?、parseConditionalCommand |
+| - | stripRedirects、execWithRedirect（fork+dup2+execve）、applyForBuiltin、BuiltinRedirectGuard |
 | - | extractWord、getCommandCompletions、getPathCompletions、getVariableCompletions、getArrayIndexCompletions、commonPrefix |
 | - | readLineWithCursor、方向鍵、Backspace、Tab 補全 |
 | - | 命令歷史與上下鍵導覽 |
-| - | cd、echo、export、env、printenv、unset 分發 |
+| - | isBuiltin、cd、echo、export、env、printenv、unset、stock 分發 |
 
 ---
 
@@ -229,6 +244,14 @@ echo $((2.5E-4*1e4))  # 0.00025 * 10000 = 2.5
 
 # 正則
 [[ abc =~ a.* ]]; echo $?
+
+# I/O 重定向（外部命令與內建指令皆支援）
+echo hello > /tmp/test_out
+echo append >> /tmp/test_out
+cat < /tmp/test_out
+ls > /tmp/ls_out; wc -l < /tmp/ls_out
+export X=1; printenv X > /tmp/env_out
+stock(100, 110)
 
 # Tab 補全（須在 TTY 下）
 # ec[TAB] → echo 
