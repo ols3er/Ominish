@@ -48,6 +48,15 @@
 - `&&` 與 `||` 可混合：`cmd1 && cmd2 || cmd3`
 - 運算結果用 `$?` 傳回
 
+### 6.5 管道 pipeline |
+
+- **`cmd1 | cmd2 | cmd3`**：前一指令的 stdout 作為下一指令的 stdin
+- 單一 `|` 分割，`||` 不分割（視為邏輯運算子）
+- 引號內的 `|` 不分割
+- `$?` 反映 pipeline 中最後一個指令的 exit status
+- 與 `&&`、`||` 可混用：`echo a | cat && true`
+- **輸出處理**：最後一階輸出經 pipe 導向父行程再寫入 stdout，使 TrackingWriter 可追蹤最後位元組；若輸出未以換行結束（如 `echo hello | head -c 3`），下一個 prompt 前會自動補換行，避免與多行 prompt（┌─...）混在一起
+
 ### 7. 分號分隔命令
 
 - `;` 分隔多個命令，依序執行
@@ -100,25 +109,39 @@
 ### 10. 變數與環境
 
 - 賦值：`VAR=value`
+- **SHELL**：進入 ominish 時自動設為執行檔的絕對路徑（經 `std.fs.selfExePathAlloc` 取得）
+- **EUID**：進入時自動設為 `geteuid()` 數值，供 `${EUID}` 與 `[[ ${EUID} == 0 ]]`（是否 root）使用
 - **陣列**：`arr=(val1 val2 val3)`；`$arr` 或 `${arr[0]}` 取首元素；`${arr[n]}` 取第 n 個；`${arr[@]}` 展開全部；`${#arr}` 取長度
+- **陣列＋命令替換**：`files=($(ls /tmp))`、`items=($(echo a b c))` 等可正確解析；tokenizer 與 parseArrayAssignment 皆將 `$(...)` 視為一整組，不在命令內空白處分割
+- **陣列追加**：`arr+=(val4 val5)` 將新元素追加到既有陣列
+- **關聯陣列**：`declare -A map` 宣告；`map[key]=value` 賦值；`${map[key]}` 取值；`${map[@]}` 展開所有值；`${#map}` 取元素個數
 - 展開：`$VAR`、`$HOME`、`$?`
+- **`$(...)` 命令替換**：執行子 shell，以其 stdout 作為替換結果；換行會變成空白；支援巢狀與多次替換，例如 `$(whoami)`、`$(echo a) $(echo b)`、`$(echo $(whoami))`
 - `$?` 傳回前一指令的 exit status
 
-### 11. 路徑展開
+### 11. 路徑展開與 Globbing
 
 - **`~`** / **`～`**（全形）：`~` → HOME，`~/path` → HOME + "/path"
 - **`$HOME`**：環境變數 HOME 展開
+- **Globbing**：`*`、`?`、`[abc]`、`[^abc]`、`[a-z]` 萬用字元展開；`ls /tmp/s*`、`echo *.zig`、`ls /tmp/systemd-private*` 會展開為符合的檔名；無匹配時保留原字串；僅展開當前目錄層級（不遞迴）
 
 ### 12. 內建指令（builtins/）
 
 - **cd**：cd、cd ~、cd $HOME、cd ~/dir、錯誤處理
+- **clear**：清除終端畫面（送出 `\x1b[2J\x1b[H` ANSI 序列）
 - **echo**：標準 echo 行為
+- **pwd**：印出目前工作目錄，優先使用 PWD（邏輯路徑、保留 symlink），與提示 `\w` 一致
 - **export**：`export VAR=value` 或 `export VAR`，將變數加入環境供子行程繼承；單獨 `export` 無參數時列出所有全域變數及其內容
 - **env**：`env` 無參數印出所有已導出的環境變數；`env VAR=VAL command` 以臨時環境執行 command，不影響當前 Shell
 - **printenv**：`printenv VAR1 VAR2` 只印出指定變數的內容（值），不顯示變數名稱；無參數印出所有
 - **unset**：`unset VAR1 VAR2` 從 env_map 完全移除變數；唯讀變數（$?、$HOME）不可 unset
+- **alias**：`alias` 列出所有別名；`alias name` 顯示指定別名；`alias name='value'` 設定別名；執行命令時第一個詞會先行別名展開（先嘗試將整行以展開結果重新解析執行；若直接 exec 失敗則改由 `/bin/sh -c` 執行，且傳給 sh 的指令字串會先做別名展開）
+- **unalias**：`unalias name` 移除別名；`unalias -a` 移除全部
+- 別名以 `__alias__name` 為 key 存於 env_map；`alias ll='ls -l'` 後執行 `ll /tmp` 會以 `ls -l /tmp` 之行為執行並正常列出目錄
+- **declare**：`declare -A name` 宣告關聯陣列
 - **stock**：`stock 買入價 賣出價` 計算股票收益（手續費 0.1425%、交易稅 0.3%、每張 1000 股）；`stock(100,110)` 單獨指令或 `$(( stock(100,110) ))` 僅輸出收益數值
 - **eval**：`eval arg1 arg2 ...` 將參數以空白連接後重新解析執行；支援二次展開、&&/||、if/while/for；遞迴深度限制 16；狀態變更影響當前 Shell
+- **source** / **`.`**：`source 路徑` 或 `. 路徑` 於當前 shell 讀取並執行腳本或 init 設定檔（如 `source ~/.ominishrc`、`. ~/.ominishrc`）；支援 ~ 與變數展開
   - 單雙引號皆支援：`eval "x=1; echo $x"`、`eval 'x=1; echo $x'` → 輸出 `1`
   - `a=b; b=10; eval echo '$'$a` → 輸出 `10`
 
@@ -129,7 +152,7 @@
 - **`<`**：標準輸入從檔案讀取（`O_RDONLY`）
 - 重定向符號可出現在命令任意位置（如 `> out ls` 或 `ls > out`）
 - 檔名支援變數展開（如 `ls > $HOME/list.txt`）
-- **外部命令**：使用 `dup2()` 在 fork 後、execve 前設定子行程的 stdin/stdout（`execWithRedirect`）
+- **外部命令**：使用 `dup2()` 在 fork 後、execve 前設定子行程的 stdin/stdout（`execWithRedirect`）；先嘗試 `execveZ`（系統 environ），失敗再試 `execvpeZ`，若仍失敗則改以 `/bin/sh -c '指令'` 執行，且傳給 sh 的指令字串會依 env_map 做別名展開（例如 `ll /tmp` → `sh -c "ls -l /tmp"`），確保 alias 後的外部命令可正常輸出
 - **內建指令**：使用 `dup()` 保存原 fd、`dup2()` 套用重定向、執行內建、`restore()` 恢復（`applyForBuiltin` + `BuiltinRedirectGuard`）
 - 新建檔案權限 0644；重定向失敗時 `$?` 為非 0
 - **注意**：`>`、`>>`、`<` 與檔名之間需有空白（例如 `ls > out`）；`ls>out` 尚未支援
@@ -153,14 +176,33 @@
 
 - **觸發**：在 readLineWithCursor 循環中捕獲 `\t`（Tab）
 - **上下文識別**：自游標向左搜尋空白，提取半成品單詞；行首補全指令，非行首補全路徑，`$` 開頭補全變數，`${arr[` 補全陣列索引
-- **指令補全**：搜尋 PATH 執行檔與內建指令（cd、echo、env、eval、export、printenv、unset），唯一匹配時加空白
+- **指令補全**：搜尋 PATH 執行檔與內建指令（cd、echo、env、eval、export、printenv、unset、alias、unalias 等），唯一匹配時加空白
 - **路徑補全**：搜尋目前目錄，支援 `~` 展開（如 `cd ~/Doc[TAB]`）；目錄補全後加 `/`，檔案加空白
 - **變數補全**：`$H[TAB]` → `$HOME` 等
 - **陣列索引補全**：`${arr[[TAB]` 列出 `${arr[0]}`, `${arr[1]}`, ... 及 `${arr[@]}`
 - **多重匹配**：先補全公共前綴；無進展時以 ls 風格單行列出候選（空白分隔），最多 100 項
 - **無匹配**：蜂鳴
 
-### 17. 模組化架構
+### 17. REPL 輸出與 prompt 顯示
+
+- **輸出未以換行結束時的處理**：當命令輸出（如 `echo hello | head -c 3` 的 `hel`）未以換行結束時，下一個 prompt 前會自動補換行，避免輸出與多行 prompt 第一行（┌─...）黏在一起；若輸出已以換行結束（如 `export | grep SHELL`），則不補多餘換行
+
+### 18. PS1 提示與 ANSI 顯示
+
+- **PS1**：從環境變數 `PS1` 讀取，未設定則預設 `ominish> `
+- **跳脫序列**：`\u` 使用者名、`\h` 主機名（短）、`\H` 主機名（完整）、`\w` 當前目錄（含 ~）、`\W` 目錄 basename、`\$` 提示符（root 為 #）、`\n` 換行、`\?` 上一個 exit status、`\\` 反斜線、`\e`/`\033` ESC、`\nnn` 八進位字元
+- **`\[...\]`**：非列印區塊，內容可含 ANSI 色碼（如 `\[\033[0;31m\]` 紅色），會遞迴展開內部跳脫
+- **ANSI 色碼**：支援 `\e[0;31m`、`\033[01;33m` 等標準序列
+- **PS1 內 `$(...)` 命令替換**：若提供 run_command 與 env_arena，getPrompt 會對 expandPrompt 結果再呼叫 expandTokenUntilStable，支援如 `$(whoami)> `、`$([[ $? != 0 ]] && echo "[✗]")` 等
+- **邏輯路徑顯示**：提示中的 `\w`、`\W` 優先使用環境變數 PWD（symlink 目錄顯示為實際路徑，如 `~/MYBUILD/Ominish` 而非解析後的 `/BK-.../ZIG`）；`cd` 成功後會更新 PWD
+
+### 19. 啟動設定檔
+
+- **~/.ominish_profile**：進入 ominish 時先讀取並執行（類似 .bash_profile / .profile）
+- **~/.ominishrc**：繼而讀取並執行（類似 .bashrc）
+- 兩檔皆為選用；換行視同分號，支援變數展開、內建指令、if/while/for 等
+
+### 20. 模組化架構
 
 - 指令與職責拆至不同模組（見 PROJECT_STRUCTURE.md）
 - 內建指令置於 `builtins/` 子目錄
@@ -171,18 +213,20 @@
 
 | 模組 | 主要功能 |
 |------|----------|
-| - | stripComments, splitByLogic, parseIfBlock, parseWhileBlock, parseForBlock, splitCommands, tokenizeWithQuotes |
+| - | stripComments, splitByLogic, splitByPipeline, parseIfBlock, parseWhileBlock, parseForBlock, splitCommands, tokenizeWithQuotes（陣列賦值延伸時跳過 `$(...)`） |
+| - | expandGlob、expandArgsGlob；萬用字元 * ? [abc] 比對與展開 |
 | - | [[ ]] 求值：二元比較、-z/-n、-e/-f/-d、=~ regex、glob |
 | - | Perl-style regex 比對 |
-| - | REPL 主迴圈、runCommandBody、processStatements、if/while/for 塊處理、eval、break/continue |
+| - | REPL 主迴圈、TrackingWriter（追蹤輸出最後位元組）、runCommandBody、runPipeline、processStatements、if/while/for 塊處理、eval、break/continue；執行前對參數做 glob 展開 |
 | - | 執行單一命令（(( ))、[[ ]]、內建、衍生行程）；與 redirect 整合，重定向時調用 execWithRedirect 或 applyForBuiltin |
 | - | $(( )) 與 (( )) 算術；內建 stock(buy,sell) 函式 |
-| - | 變數展開、賦值、$?、parseConditionalCommand |
-| - | stripRedirects、execWithRedirect（fork+dup2+execve）、applyForBuiltin、BuiltinRedirectGuard |
+| - | 變數展開、賦值、$?、parseConditionalCommand、isAssocArrayAssignment、isArrayAppend、applyAssocArrayAssignment、appendArrayAssignment；parseArrayAssignment/parseArrayAppend 將 `$(...)` 視為單一值 |
+| - | stripRedirects、execWithRedirect（fork+dup2+execve；失敗時 fallback 為 sh -c + 別名展開）、applyForBuiltin、BuiltinRedirectGuard |
 | - | extractWord、getCommandCompletions、getPathCompletions、getVariableCompletions、getArrayIndexCompletions、commonPrefix |
 | - | readLineWithCursor、方向鍵、Backspace、Tab 補全 |
 | - | 命令歷史與上下鍵導覽 |
-| - | isBuiltin、cd、echo、export、env、printenv、unset、stock 分發 |
+| - | isBuiltin、cd、echo、export、env、printenv、unset、declare、alias、unalias、stock 分發 |
+| - | expandPrompt、getPrompt；PS1 跳脫序列 \u \h \w \$ \n \e \[ \] 等 |
 
 ---
 
@@ -209,6 +253,17 @@ for f in a b c; do echo "file: $f"; done
 true && echo a && echo b
 false || echo ok
 
+# globbing
+ls /tmp/s*
+echo *.zig
+ls /tmp/systemd-private*
+
+# pipeline
+echo hello | cat
+echo a | cat | cat
+echo hello | head -c 3   # 輸出 hel 未以換行結束，下個 prompt 前會自動補換行
+export | grep SHELL     # 輸出以換行結束，不補多餘換行
+
 # 條件與算術
 [[ -z "" ]]; echo $?
 x=5; echo $(( x++ )); echo $x
@@ -230,9 +285,26 @@ printenv
 unset MYVAR; echo "MYVAR=$MYVAR"
 unset '?'   # 唯讀，會印出錯誤
 unset 'HOME'   # 唯讀，會印出錯誤
+
+# 別名（設定後執行會展開為對應指令；若直接 exec 失敗則經 sh -c 執行並做別名展開）
+alias ll='ls -l'
+ll /tmp                    # 等同 ls -l /tmp，會列出 /tmp 目錄
+alias lll='ls -la'
+lll /tmp                   # 等同 ls -la /tmp
+alias
+alias ll
+unalias ll
+alias
+
 # 陣列
 arr=(a b c); echo ${arr[0]} ${arr[1]} ${#arr}
 echo ${arr[@]}
+arr+=(d e); echo ${arr[@]}
+files=($(ls /tmp)); echo ${#files}; echo ${files[@]}
+
+# 關聯陣列
+declare -A map; map[a]=1; map[b]=2; echo ${map[a]} ${map[b]}
+echo ${map[@]}
 
 eval echo hello
 eval "cd .."
@@ -251,6 +323,11 @@ echo append >> /tmp/test_out
 cat < /tmp/test_out
 ls > /tmp/ls_out; wc -l < /tmp/ls_out
 export X=1; printenv X > /tmp/env_out
+
+# PS1 提示與 ANSI
+export PS1='\u@\h:\w\$ '
+# PS1='\[\033[0;31m\]\u\[\033[0m\]\$ '   # 紅色使用者名
+# PS1='\u:\W\$ '   # 使用者:basename$
 
 stock(100, 110)
 stock 100 110
