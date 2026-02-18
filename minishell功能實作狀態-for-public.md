@@ -85,14 +85,22 @@
 - **`(( expr ))`**：作為條件，0→`$?`=0，非 0→`$?`=1
 - 支援變數如 `x=5; echo $(( x++ )); echo $x`
 - **浮點運算**：支援小數，如 `echo $((3.5+7.88))` → `11.38`；整數結果不帶小數點，如 `echo $((3+7))` → `10`
+- **科學記號**：支援 `1.2e3`、`2.5E-4` 等形式，如 `echo $((1.2e3+PI))` → `1203.1415926536`
+- **內建常量**：`PI` / `pi` 恆為 `3.141592653589793`，如 `echo $((2*PI))` → `6.283185307179586`
+- **數學函式**：`sin()`, `cos()`, `tan()`, `sec()`, `csc()`, `cot()`, `asin()`, `acos()`, `atan()`, `sqrt()`, `pow(x,y)`；`sec`/`csc`/`cot`/`asin`/`acos` 定義域錯誤時輸出 `nan`
 - 原生支援：浮點運算
 - 實作方式：沒有呼叫 bc、awk 等外部程式。
 - 型別與運算：使用內建 f64 與 std.math（pow、mod 等），運算在行程內完成。
 - 硬體支援：f64 對應 IEEE 754 雙精度浮點數，由 CPU 直接執行浮點運算。
+- 精度到小數點後 15 位。
+- 實作科學記號支援：例如支援 echo $(( 1.2e3 + PI )) 這種語法。
+- 實作 sin,cos,tan,pow,sqrt
+- echo $((sqrt(-1))) 或 echo $((1/0)) 回應為 nan
 
 ### 10. 變數與環境
 
 - 賦值：`VAR=value`
+- **陣列**：`arr=(val1 val2 val3)`；`$arr` 或 `${arr[0]}` 取首元素；`${arr[n]}` 取第 n 個；`${arr[@]}` 展開全部；`${#arr}` 取長度
 - 展開：`$VAR`、`$HOME`、`$?`
 - `$?` 傳回前一指令的 exit status
 
@@ -127,7 +135,18 @@
 - termios 僅關閉 ICANON 與 ECHO
 - just_backspace 保留以略過 BS+SP 序列中夾帶的 space
 
-### 15. 模組化架構
+### 15. Tab 自動補全
+
+- **觸發**：在 readLineWithCursor 循環中捕獲 `\t`（Tab）
+- **上下文識別**：自游標向左搜尋空白，提取半成品單詞；行首補全指令，非行首補全路徑，`$` 開頭補全變數，`${arr[` 補全陣列索引
+- **指令補全**：搜尋 PATH 執行檔與內建指令（cd、echo、env、eval、export、printenv、unset），唯一匹配時加空白
+- **路徑補全**：搜尋目前目錄，支援 `~` 展開（如 `cd ~/Doc[TAB]`）；目錄補全後加 `/`，檔案加空白
+- **變數補全**：`$H[TAB]` → `$HOME` 等
+- **陣列索引補全**：`${arr[[TAB]` 列出 `${arr[0]}`, `${arr[1]}`, ... 及 `${arr[@]}`
+- **多重匹配**：先補全公共前綴；無進展時以 ls 風格單行列出候選（空白分隔），最多 100 項
+- **無匹配**：蜂鳴
+
+### 16. 模組化架構
 
 - 指令與職責拆至不同模組（見 PROJECT_STRUCTURE.md）
 - 內建指令置於 `builtins/` 子目錄
@@ -145,7 +164,8 @@
 | - | 執行單一命令（(( ))、[[ ]]、內建、衍生行程） |
 | - | $(( )) 與 (( )) 算術 |
 | - | 變數展開、賦值、$?、parseConditionalCommand |
-| - | readLineWithCursor、方向鍵、Backspace |
+| - | extractWord、getCommandCompletions、getPathCompletions、getVariableCompletions、getArrayIndexCompletions、commonPrefix |
+| - | readLineWithCursor、方向鍵、Backspace、Tab 補全 |
 | - | 命令歷史與上下鍵導覽 |
 | - | cd、echo、export、env、printenv、unset 分發 |
 
@@ -178,6 +198,8 @@ false || echo ok
 [[ -z "" ]]; echo $?
 x=5; echo $(( x++ )); echo $x
 echo $((3.5+7.88))
+echo $((2*PI))
+echo $((sin(PI/2)))
 
 # cd 與路徑
 cd ~; echo $HOME; ls ~/
@@ -193,10 +215,25 @@ printenv
 unset MYVAR; echo "MYVAR=$MYVAR"
 unset '?'   # 唯讀，會印出錯誤
 unset 'HOME'   # 唯讀，會印出錯誤
+# 陣列
+arr=(a b c); echo ${arr[0]} ${arr[1]} ${#arr}
+echo ${arr[@]}
+
 eval echo hello
-a=b; b=10; eval echo '$'$a
 eval "cd .."
+echo $((PI))
+echo $((2*pi))
+echo $((PI*2))
+echo $((1.2e3+PI))    # 1200 + 3.14... ≈ 1203.14
+echo $((2.5E-4*1e4))  # 0.00025 * 10000 = 2.5
 
 # 正則
 [[ abc =~ a.* ]]; echo $?
+
+# Tab 補全（須在 TTY 下）
+# ec[TAB] → echo 
+# echo [TAB] → 列出目前目錄（ls 風格單行）
+# cd ~/Doc[TAB] → cd ~/Documents/
+# $H[TAB] → $HOME
+# arr=(a b c); echo ${arr[[TAB] → 列出 ${arr[0]} ${arr[1]} ${arr[2]} ${arr[@]}
 ```
