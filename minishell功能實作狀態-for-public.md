@@ -138,6 +138,7 @@
 - **alias**：`alias` 列出所有別名；`alias name` 顯示指定別名；`alias name='value'` 設定別名；執行命令時第一個詞會先行別名展開（先嘗試將整行以展開結果重新解析執行；若直接 exec 失敗則改由 `/bin/sh -c` 執行，且傳給 sh 的指令字串會先做別名展開）
 - **unalias**：`unalias name` 移除別名；`unalias -a` 移除全部
 - 別名以 `__alias__name` 為 key 存於 env_map；`alias ll='ls -l'` 後執行 `ll /tmp` 會以 `ls -l /tmp` 之行為執行並正常列出目錄
+- **別名查表前 WTF-8 檢查**：`getAlias` 在呼叫 `env_map.get(key)` 前會以 `std.unicode.wtf8ValidateSlice(name)` 檢查第一個詞是否為合法 WTF-8；若否（例如在 prompt 貼上 emoji 後用 Backspace 刪到不完整 UTF-8 位元組），直接回傳 null、不查表，避免 `env_map.get` 因 key 非法而 panic，該輸入改當一般指令處理。
 - **declare**：`declare -A name` 宣告關聯陣列
 - **stock**：`stock 買入價 賣出價` 計算股票收益（手續費 0.1425%、交易稅 0.3%、每張 1000 股）；`stock(100,110)` 單獨指令或 `$(( stock(100,110) ))` 僅輸出收益數值
 - **eval**：`eval arg1 arg2 ...` 將參數以空白連接後重新解析執行；支援二次展開、&&/||、if/while/for；遞迴深度限制 16；狀態變更影響當前 Shell
@@ -194,6 +195,7 @@
 - **`\[...\]`**：非列印區塊，內容可含 ANSI 色碼（如 `\[\033[0;31m\]` 紅色），會遞迴展開內部跳脫
 - **ANSI 色碼**：支援 `\e[0;31m`、`\033[01;33m` 等標準序列
 - **PS1 內 `$(...)` 命令替換**：若提供 run_command 與 env_arena，getPrompt 會對 expandPrompt 結果再呼叫 expandTokenUntilStable，支援如 `$(whoami)> `、`$([[ $? != 0 ]] && echo "[✗]")` 等
+- **PS1 賦值引號**：設定時值首尾引號必須一致（`'...'` 或 `"..."`），若寫成 `'..."` 會解析錯誤、提示不生效。
 - **邏輯路徑顯示**：提示中的 `\w`、`\W` 優先使用環境變數 PWD（symlink 目錄顯示為實際路徑，如 `~/MYBUILD/Ominish` 而非解析後的 `/BK-.../ZIG`）；`cd` 成功後會更新 PWD
 
 ### 19. 啟動設定檔
@@ -201,6 +203,7 @@
 - **~/.ominish_profile**：進入 ominish 時先讀取並執行（類似 .bash_profile / .profile）
 - **~/.ominishrc**：繼而讀取並執行（類似 .bashrc）
 - 兩檔皆為選用；換行視同分號，支援變數展開、內建指令、if/while/for 等
+- **引號需成對**：賦值時若值以單引號 `'` 開頭，結尾也必須是單引號；若以雙引號 `"` 開頭，結尾也必須是雙引號。首尾引號不一致（例如 `PS1='...'` 誤寫成 `PS1='..."`）會導致解析錯誤、變數未正確設定。
 
 ### 20. 模組化架構
 
