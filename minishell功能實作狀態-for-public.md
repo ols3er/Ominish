@@ -218,10 +218,10 @@
 
 ### 21. 單元測試
 
-- **執行方式**：`zig build test`（與 `zig build run` 相同，需在本機安裝 Zig）
-- **機制**：使用 Zig 內建 test runner，以 `src/` 為根編譯測試執行檔，會自動收集並執行所有依賴模組內的 `test "描述" { ... }` 區塊
+- **執行方式**：build test`
+- **機制**：使用 test runner，以 `src/` 為根編譯測試執行檔，會自動收集並執行所有依賴模組內的 `test "描述" { ... }` 區塊
 - **範例**：`` 內有 `isValidVarName`、`findAssignmentEq` 的測試；`` 內有 `splitCommands` 的測試（含引號內不分割 `;`）
-- **撰寫**：在任意 `.zig` 中加上 `test "名稱" { try std.testing.expect(...); }` 即可，該模組被 main 依賴鏈引用時，其測試會被一併執行
+- **撰寫**：在任意 src 中加上 `test "名稱" { try std.testing.expect(...); }` 即可，該模組被 main 依賴鏈引用時，其測試會被一併執行
 
 ---
 
@@ -271,7 +271,7 @@ false || echo ok
 
 # globbing
 ls /tmp/s*
-echo *.zig
+echo *.c
 ls /tmp/systemd-private*
 
 # pipeline
