@@ -108,6 +108,7 @@
 
 ### 10. 變數與環境
 
+- **引號與參數分割**：`tokenizeWithQuotes` 在未加引號的 token 遇到空白即結束，不把後續引號段併入同一 token，故 `echo "$str"`、`printf "%s" "$str"` 等會正確得到兩個參數並展開；執行前以獨立 arena 複製 token，避免與 lexer 共用 allocator 導致引號內參數被覆蓋。
 - 賦值：`VAR=value`
 - **SHELL**：進入 ominish 時自動設為執行檔的絕對路徑（經 `std.fs.selfExePathAlloc` 取得）
 - **EUID**：進入時自動設為 `geteuid()` 數值，供 `${EUID}` 與 `[[ ${EUID} == 0 ]]`（是否 root）使用
@@ -141,10 +142,13 @@
 - **別名查表前 WTF-8 檢查**：`getAlias` 在呼叫 `env_map.get(key)` 前會以 `std.unicode.wtf8ValidateSlice(name)` 檢查第一個詞是否為合法 WTF-8；若否（例如在 prompt 貼上 emoji 後用 Backspace 刪到不完整 UTF-8 位元組），直接回傳 null、不查表，避免 `env_map.get` 因 key 非法而 panic，該輸入改當一般指令處理。
 - **declare**：`declare -A name` 宣告關聯陣列
 - **stock**：`stock 買入價 賣出價` 計算股票收益（手續費 0.1425%、交易稅 0.3%、每張 1000 股）；`stock(100,110)` 單獨指令或 `$(( stock(100,110) ))` 僅輸出收益數值
+- **help**：`help` 列出所有內建指令與簡短用法；`help 指令名` 只顯示該指令；無此內建時印出「無此內建指令」
+- **printf**：支援 %s %d %i %u %x %X %o %f %e %E %g %G %c %% %b %q %Q 等；**width**：%d/%i/%u/%x/%X/%o/%f 支援左側補空白（如 `printf "%10d" 123456` → `    123456`）；**%f** 支援 precision（如 `%4.2f`）；**%e/%E** 科學記號（%E 大寫）；格式字串無 `\n` 時不自動換行（與 bash 一致）；`%%` 搭配多餘參數時不重複輸出、不無限迴圈；%q 可做 shell 可重用輸出
 - **eval**：`eval arg1 arg2 ...` 將參數以空白連接後重新解析執行；支援二次展開、&&/||、if/while/for；遞迴深度限制 16；狀態變更影響當前 Shell
 - **source** / **`.`**：`source 路徑` 或 `. 路徑` 於當前 shell 讀取並執行腳本或 init 設定檔（如 `source ~/.ominishrc`、`. ~/.ominishrc`）；支援 ~ 與變數展開
   - 單雙引號皆支援：`eval "x=1; echo $x"`、`eval 'x=1; echo $x'` → 輸出 `1`
   - `a=b; b=10; eval echo '$'$a` → 輸出 `10`
+  - exit：exit [n] 結束 shell，n 省略則用 $?
 
 ### 13. I/O 重定向
 
@@ -177,7 +181,7 @@
 
 - **觸發**：在 readLineWithCursor 循環中捕獲 `\t`（Tab）
 - **上下文識別**：自游標向左搜尋空白，提取半成品單詞；行首補全指令，非行首補全路徑，`$` 開頭補全變數，`${arr[` 補全陣列索引
-- **指令補全**：搜尋 PATH 執行檔與內建指令（cd、echo、env、eval、export、printenv、unset、alias、unalias 等），唯一匹配時加空白
+- **指令補全**：搜尋 PATH 執行檔與內建指令（cd、echo、env、eval、export、help、printenv、printf、unset、alias、unalias 等），唯一匹配時加空白
 - **路徑補全**：搜尋目前目錄，支援 `~` 展開（如 `cd ~/Doc[TAB]`）；目錄補全後加 `/`，檔案加空白
 - **變數補全**：`$H[TAB]` → `$HOME` 等
 - **陣列索引補全**：`${arr[[TAB]` 列出 `${arr[0]}`, `${arr[1]}`, ... 及 `${arr[@]}`
@@ -186,7 +190,7 @@
 
 ### 17. REPL 輸出與 prompt 顯示
 
-- **輸出未以換行結束時的處理**：當命令輸出（如 `echo hello | head -c 3` 的 `hel`）未以換行結束時，下一個 prompt 前會自動補換行，避免輸出與多行 prompt 第一行（┌─...）黏在一起；若輸出已以換行結束（如 `export | grep SHELL`），則不補多餘換行
+- **格式字串無 \\n 不自動換行**：與 bash 一致，若命令輸出未以換行結束（如 `printf "%e" 123`），下一個 prompt 緊接在輸出後、不自動補換行
 
 ### 18. PS1 提示與 ANSI 顯示
 
@@ -198,17 +202,26 @@
 - **PS1 賦值引號**：設定時值首尾引號必須一致（`'...'` 或 `"..."`），若寫成 `'..."` 會解析錯誤、提示不生效。
 - **邏輯路徑顯示**：提示中的 `\w`、`\W` 優先使用環境變數 PWD（symlink 目錄顯示為實際路徑，如 `~/MYBUILD/Ominish` 而非解析後的 `/BK-.../ZIG`）；`cd` 成功後會更新 PWD
 
-### 19. 啟動設定檔
+### 19. 啟動設定檔與互動／非互動模式
 
 - **~/.ominish_profile**：進入 ominish 時先讀取並執行（類似 .bash_profile / .profile）
 - **~/.ominishrc**：繼而讀取並執行（類似 .bashrc）
 - 兩檔皆為選用；換行視同分號，支援變數展開、內建指令、if/while/for 等
 - **引號需成對**：賦值時若值以單引號 `'` 開頭，結尾也必須是單引號；若以雙引號 `"` 開頭，結尾也必須是雙引號。首尾引號不一致（例如 `PS1='...'` 誤寫成 `PS1='..."`）會導致解析錯誤、變數未正確設定。
+- **僅互動模式顯示橫幅**：「Loaded .ominish_profile」「Loaded .ominishrc」與「OB2D Linux minishell」僅在 **stdin 為 TTY（互動模式）** 時顯示，且每 process 只顯示一次；管線或重定向 stdin（如 `echo 'echo test' | ./ominish`）時不顯示上述橫幅。
+- **非互動模式不顯示 prompt**：stdin 非 TTY 時不輸出 prompt（多行橫幅與 `└╼$>` 等），僅輸出命令結果；且空 prompt 時不進行「從輸入剝除 prompt」的處理，避免無限迴圈並正確在 EOF 結束。
 
 ### 20. 模組化架構
 
 - 指令與職責拆至不同模組（見 PROJECT_STRUCTURE.md）
 - 內建指令置於 `builtins/` 子目錄
+
+### 21. 單元測試
+
+- **執行方式**：`zig build test`（與 `zig build run` 相同，需在本機安裝 Zig）
+- **機制**：使用 Zig 內建 test runner，以 `src/` 為根編譯測試執行檔，會自動收集並執行所有依賴模組內的 `test "描述" { ... }` 區塊
+- **範例**：`` 內有 `isValidVarName`、`findAssignmentEq` 的測試；`` 內有 `splitCommands` 的測試（含引號內不分割 `;`）
+- **撰寫**：在任意 `.zig` 中加上 `test "名稱" { try std.testing.expect(...); }` 即可，該模組被 main 依賴鏈引用時，其測試會被一併執行
 
 ---
 
