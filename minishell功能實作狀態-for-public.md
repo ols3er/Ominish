@@ -35,6 +35,15 @@
 - list 支援變數展開與單引號，展開後依空白切分為多個 word
 - break / continue 於 for 內同樣有效
 
+### 4.5 流程控制：for (( )) ... do ... done（C 風格）
+
+- 語法：`for (( init; condition; update )); do body; done`
+- **init** 執行一次；接著重複：檢查 **condition**（空視為真）→ 若結果為 0 則離開 → 執行 **body** → 執行 **update**
+- 支援單行：`for ((i=1; i<=10; i=i+1)); do echo $i; done`
+- 支援多行：換行輸入，以 `> ` 提示繼續；`needMoreLinesForBlock` 與 REPL 皆會辨識 `for ((` 並累積至完整區塊
+- init / condition / update 為算術表達式，支援賦值（`=`）與變數；變數可先用 `declare -i` 宣告整數，body 內可用 `let sum+=1` 等
+- break / continue 於此 for 內同樣有效
+
 ### 5. break 與 continue
 
 - **break**：結束最內層 while/for 迴圈
@@ -99,6 +108,7 @@
 
 - **`$(( expr ))`**：展開為計算結果
 - **`(( expr ))`**：作為條件，0→`$?`=0，非 0→`$?`=1
+- **賦值與複合賦值**：`$(( x=5 ))`、`$(( sum+=1 ))`；支援 `=`、`+=`、`-=`、`*=`、`/=`、`%=`，結果寫入 env_map，供 for (( )) 的 init/update 與 **let** 使用
 - 支援變數如 `x=5; echo $(( x++ )); echo $x`
 - **浮點運算**：支援小數，如 `echo $((3.5+7.88))` → `11.38`；整數結果不帶小數點，如 `echo $((3+7))` → `10`
 - **科學記號**：支援 `1.2e3`、`2.5E-4` 等形式，如 `echo $((1.2e3+PI))` → `1203.1415926536`
@@ -123,6 +133,7 @@
 - **陣列＋命令替換**：`files=($(ls /tmp))`、`items=($(echo a b c))` 等可正確解析；tokenizer 與 parseArrayAssignment 皆將 `$(...)` 視為一整組，不在命令內空白處分割
 - **陣列追加**：`arr+=(val4 val5)` 將新元素追加到既有陣列
 - **關聯陣列**：`declare -A map` 宣告；`map[key]=value` 賦值；`${map[key]}` 取值；`${map[@]}` 展開所有值；`${#map}` 取元素個數
+- **整數變數（declare -i）**：`declare -i i sum` 將變數標記為整數；之後對該變數賦值時，右側會以算術求值後再寫入（如 `i=1+2` → 3）。`declare -i x=10` 可同時宣告並賦值
 - 展開：`$VAR`、`$HOME`、`$?`
 - **`$(...)` 命令替換**：執行子 shell，以其 stdout 作為替換結果；換行會變成空白；支援巢狀與多次替換，例如 `$(whoami)`、`$(echo a) $(echo b)`、`$(echo $(whoami))`
 - `$?` 傳回前一指令的 exit status
@@ -147,7 +158,8 @@
 - **unalias**：`unalias name` 移除別名；`unalias -a` 移除全部
 - 別名以 `__alias__name` 為 key 存於 env_map；`alias ll='ls -l'` 後執行 `ll /tmp` 會以 `ls -l /tmp` 之行為執行並正常列出目錄
 - **別名查表前 WTF-8 檢查**：`getAlias` 在呼叫 `env_map.get(key)` 前會以 `std.unicode.wtf8ValidateSlice(name)` 檢查第一個詞是否為合法 WTF-8；若否（例如在 prompt 貼上 emoji 後用 Backspace 刪到不完整 UTF-8 位元組），直接回傳 null、不查表，避免 `env_map.get` 因 key 非法而 panic，該輸入改當一般指令處理。
-- **declare**：`declare -A name` 宣告關聯陣列
+- **declare**：`declare -A name` 宣告關聯陣列；`declare -i name [name=expr ...]` 宣告整數變數（可多個名稱，或 `name=expr` 同時賦值，expr 以算術求值）
+- **let**：`let expr [expr ...]` 將每個參數當作算術表達式求值（支援 `=`、`+=`、`-=` 等）；最後一個結果非 0 則 exit 0，否則 1；例：`let sum+=1`、`let i=1 j=2`
 - **stock**：`stock 買入價 賣出價` 計算股票收益（手續費 0.1425%、交易稅 0.3%、每張 1000 股）；`stock(100,110)` 單獨指令或 `$(( stock(100,110) ))` 僅輸出收益數值
 - **help**：`help` 列出所有內建指令與簡短用法；`help 指令名` 只顯示該指令；無此內建時印出「無此內建指令」
 - **printf**：支援 %s %d %i %u %x %X %o %f %e %E %g %G %c %% %b %q %Q 等；**width**：%d/%i/%u/%x/%X/%o/%f 支援左側補空白（如 `printf "%10d" 123456` → `    123456`）；**%f** 支援 precision（如 `%4.2f`）；**%e/%E** 科學記號（%E 大寫）；格式字串無 `\n` 時不自動換行（與 bash 一致）；`%%` 搭配多餘參數時不重複輸出、不無限迴圈；%q 可做 shell 可重用輸出
@@ -188,7 +200,7 @@
 
 - **觸發**：在 readLineWithCursor 循環中捕獲 `\t`（Tab）
 - **上下文識別**：自游標向左搜尋空白，提取半成品單詞；行首補全指令，非行首補全路徑，`$` 開頭補全變數，`${arr[` 補全陣列索引
-- **指令補全**：搜尋 PATH 執行檔與內建指令（cd、echo、env、eval、export、help、printenv、printf、unset、alias、unalias 等），唯一匹配時加空白
+- **指令補全**：搜尋 PATH 執行檔與內建指令（cd、declare、echo、env、eval、export、help、let、printenv、printf、unset、alias、unalias 等），唯一匹配時加空白
 - **路徑補全**：搜尋目前目錄，支援 `~` 展開（如 `cd ~/Doc[TAB]`）；目錄補全後加 `/`，檔案加空白
 - **變數補全**：`$H[TAB]` → `$HOME` 等
 - **陣列索引補全**：`${arr[[TAB]` 列出 `${arr[0]}`, `${arr[1]}`, ... 及 `${arr[@]}`
