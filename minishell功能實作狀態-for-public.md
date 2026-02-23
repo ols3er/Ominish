@@ -70,7 +70,7 @@
 - `==` 與 `=` 對字串作用相同；`==` 右側無引號時可做 glob 樣式比對
 - 兩邊皆為整數時走數值比較；否則為字串比較
 - 引號內字串會正確去除外層引號再比較
-- **尚未實作**：`-eq`, `-ne`, `-lt`, `-gt` 等 test 風格運算子
+- **test / [ ] 風格運算子**（見 §8.5）：`-eq`, `-ne`, `-lt`, `-le`, `-gt`, `-ge` 數值比較；`-e`/`-f`/`-d` 檔案存在/一般檔/目錄；`-r`/`-w`/`-x` 可讀/可寫/可執行；`-o`（OR）、`-a`（AND），由 conditional.eval 支援
 
 #### 8.2 字串判斷
 
@@ -82,11 +82,18 @@
 - `[[ -e 檔案 ]]`：存在
 - `[[ -f 檔案 ]]`：一般檔
 - `[[ -d 檔案 ]]`：目錄
+- `[[ -r / -w / -x 檔案 ]]`：可讀、可寫、可執行（conditional.eval，供 `[ ]` / `test` 使用）
 
 #### 8.4 正則比對
 
 - `[[ $a =~ regex ]]`：Perl 風格 regex
 - 支援：`.` `*` `+` `?` `[abc]` `[^abc]` `[a-z]` `^` `$` `\`
+
+#### 8.5 [ ] 與 test 指令
+
+- **`[ ... ]`**：當參數至少 4 個且首為 `[`、末為 `]` 時，內層以空白接成字串交給 `conditional.eval` 求值，依結果設定 `$?`（0 真 / 1 假）。未跳脫的 `[ 2 > 1 ]` 因 `>` 被重定向吃掉可能只剩 3 參數，故意不予處理。
+- **`test EXPR`**：當第一個參數為 `test` 且至少 2 個參數時，其餘參數接成字串交給 `conditional.eval`，與 `[ EXPR ]` 行為一致。
+- 支援 `-eq` / `-ne` / `-lt` / `-le` / `-gt` / `-ge`、`-e` / `-f` / `-d` / `-r` / `-w` / `-x`、`-o` / `-a` 等（見 ）。
 
 ### 9. 算術運算
 
@@ -124,7 +131,7 @@
 
 - **`~`** / **`～`**（全形）：`~` → HOME，`~/path` → HOME + "/path"
 - **`$HOME`**：環境變數 HOME 展開
-- **Globbing**：`*`、`?`、`[abc]`、`[^abc]`、`[a-z]` 萬用字元展開；`ls /tmp/s*`、`echo *.zig`、`ls /tmp/systemd-private*` 會展開為符合的檔名；無匹配時保留原字串；僅展開當前目錄層級（不遞迴）
+- **Globbing**：`*`、`?`、`[abc]`、`[^abc]`、`[a-z]` 萬用字元展開；`ls /tmp/s*`、`echo *.`、`ls /tmp/systemd-private*` 會展開為符合的檔名；無匹配時保留原字串；僅展開當前目錄層級（不遞迴）
 
 ### 12. 內建指令（builtins/）
 
@@ -168,7 +175,7 @@
 - **Raw 模式**：關閉 ICANON、ECHO，逐字讀取
 - **左右方向鍵**：ESC [ C / ESC [ D，游標移動
 - **Backspace / DEL**：刪除游標前一字元
-- **上下鍵**：歷史導覽（getPrevious / getNext）
+- **上下鍵**：歷史導覽（getPrevious / getNext）；叫出多行歷史時會壓成單行顯示（`flattenMultilineToSingle` / `flattenHistoryInPlace`）：各行以 `"; "` 相接，若換行前是 `then` 或 `do` 則只加一空格，避免產生 `then;` 導致 shell 解析錯誤
 - 非 TTY 時自動改用 readUntilDelimiterOrEof
 
 ### 15. Backspace 處理
@@ -199,6 +206,9 @@
 - **`\[...\]`**：非列印區塊，內容可含 ANSI 色碼（如 `\[\033[0;31m\]` 紅色），會遞迴展開內部跳脫
 - **ANSI 色碼**：支援 `\e[0;31m`、`\033[01;33m` 等標準序列
 - **PS1 內 `$(...)` 命令替換**：若提供 run_command 與 env_arena，getPrompt 會對 expandPrompt 結果再呼叫 expandTokenUntilStable，支援如 `$(whoami)> `、`$([[ $? != 0 ]] && echo "[✗]")` 等
+- **空括號填寫**（fillEmptyBrackets）：`┌─[]─`、`─[]─`、`-[]-` 或只含 ANSI 的括號會填為 `[user@host]` 或 `[-]`（避免重複段再填 user@host）
+- **連續相同括號去重**（dedupeConsecutiveBracketSegments）：`...[X]─[X]─` 等第二段改為 `[-]`，支援 `]─[`、`]-[`、`][` 三種分隔
+- **失敗時第一個括號 [X]**（replaceFirstBracketWithX）：當 `$? != 0` 時，將「┌─[ 」或「─[ 」後的第一個括號內容改為 `[X]`；若該括號已是 PS1 的 `[✗]` 則保留不覆寫
 - **PS1 賦值引號**：設定時值首尾引號必須一致（`'...'` 或 `"..."`），若寫成 `'..."` 會解析錯誤、提示不生效。
 - **邏輯路徑顯示**：提示中的 `\w`、`\W` 優先使用環境變數 PWD（symlink 目錄顯示為實際路徑，如 `~/MYBUILD/Ominish` 而非解析後的 `/BK-.../ZIG`）；`cd` 成功後會更新 PWD
 
@@ -218,10 +228,10 @@
 
 ### 21. 單元測試
 
-- **執行方式**：build test`
-- **機制**：使用 test runner，以 `src/` 為根編譯測試執行檔，會自動收集並執行所有依賴模組內的 `test "描述" { ... }` 區塊
+- **執行方式**：` build test`（與 ` build run` 相同，需在本機安裝 ）
+- **機制**：使用  內建 test runner，以 `src/` 為根編譯測試執行檔，會自動收集並執行所有依賴模組內的 `test "描述" { ... }` 區塊
 - **範例**：`` 內有 `isValidVarName`、`findAssignmentEq` 的測試；`` 內有 `splitCommands` 的測試（含引號內不分割 `;`）
-- **撰寫**：在任意 src 中加上 `test "名稱" { try std.testing.expect(...); }` 即可，該模組被 main 依賴鏈引用時，其測試會被一併執行
+- **撰寫**：在任意 `src .` 中加上 `test "名稱" { try std.testing.expect(...); }` 即可，該模組被 main 依賴鏈引用時，其測試會被一併執行
 
 ---
 
@@ -231,18 +241,18 @@
 |------|----------|
 | - | stripComments, splitByLogic, splitByPipeline, parseIfBlock, parseWhileBlock, parseForBlock, splitCommands, tokenizeWithQuotes（陣列賦值延伸時跳過 `$(...)`） |
 | - | expandGlob、expandArgsGlob；萬用字元 * ? [abc] 比對與展開 |
-| - | [[ ]] 求值：二元比較、-z/-n、-e/-f/-d、=~ regex、glob |
+| - | [[ ]] 求值：二元比較、-z/-n、-e/-f/-d/-r/-w/-x、-eq/-ne/-lt/-le/-gt/-ge、-o/-a、=~ regex、glob |
 | - | Perl-style regex 比對 |
 | - | REPL 主迴圈、TrackingWriter（追蹤輸出最後位元組）、runCommandBody、runPipeline、processStatements、if/while/for 塊處理、eval、break/continue；執行前對參數做 glob 展開 |
-| - | 執行單一命令（(( ))、[[ ]]、內建、衍生行程）；與 redirect 整合，重定向時調用 execWithRedirect 或 applyForBuiltin |
+| - | 執行單一命令（(( ))、[[ ]]、[ ]、test、內建、衍生行程）；[ ] 至少 4 參數、test 至少 2 參數時呼叫 conditional.eval；與 redirect 整合 |
 | - | $(( )) 與 (( )) 算術；內建 stock(buy,sell) 函式 |
 | - | 變數展開、賦值、$?、parseConditionalCommand、isAssocArrayAssignment、isArrayAppend、applyAssocArrayAssignment、appendArrayAssignment；parseArrayAssignment/parseArrayAppend 將 `$(...)` 視為單一值 |
 | - | stripRedirects、execWithRedirect（fork+dup2+execve；失敗時 fallback 為 sh -c + 別名展開）、applyForBuiltin、BuiltinRedirectGuard |
 | - | extractWord、getCommandCompletions、getPathCompletions、getVariableCompletions、getArrayIndexCompletions、commonPrefix |
-| - | readLineWithCursor、方向鍵、Backspace、Tab 補全 |
+| - | readLineWithCursor、方向鍵、Backspace、Tab 補全；多行歷史壓成單行（flattenMultilineToSingle、flattenHistoryInPlace、lineEndsWithThenOrDo） |
 | - | 命令歷史與上下鍵導覽 |
 | - | isBuiltin、cd、echo、export、env、printenv、unset、declare、alias、unalias、stock 分發 |
-| - | expandPrompt、getPrompt；PS1 跳脫序列 \u \h \w \$ \n \e \[ \] 等 |
+| - | expandPrompt、getPrompt；PS1 跳脫序列 \u \h \w \$ \n \e \[ \] 等；fillEmptyBrackets、dedupeConsecutiveBracketSegments、replaceFirstBracketWithX（失敗 [X]，保留 [✗]） |
 
 ---
 
@@ -280,8 +290,11 @@ echo a | cat | cat
 echo hello | head -c 3   # 輸出 hel 未以換行結束，下個 prompt 前會自動補換行
 export | grep SHELL     # 輸出以換行結束，不補多餘換行
 
-# 條件與算術
+# 條件與算術、[ ] 與 test
 [[ -z "" ]]; echo $?
+[ 1 -eq 1 ]; echo $?
+test -f /etc/passwd; echo $?
+test -d /etc; echo $?
 x=5; echo $(( x++ )); echo $x
 echo $((3.5+7.88))
 echo $((2*PI))
