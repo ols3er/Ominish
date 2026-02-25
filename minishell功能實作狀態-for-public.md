@@ -73,25 +73,29 @@
 
 ### 8. 條件判斷 [[ ]]
 
+- **[[ ]] 與 [ ] / test 使用同一套 conditional.eval**，故下列運算子在 `[[ ... ]]` 中皆可用。
+
 #### 8.1 二元比較
 
 - **運算符**：`=`, `==`, `!=`, `<`, `>`, `<=`, `>=`
+- **數值比較（[ ] 風格）**：`[[ 1 -eq 1 ]]`、`-ne`、`-lt`、`-le`、`-gt`、`-ge`
 - `==` 與 `=` 對字串作用相同；`==` 右側無引號時可做 glob 樣式比對
 - 兩邊皆為整數時走數值比較；否則為字串比較
 - 引號內字串會正確去除外層引號再比較
-- **test / [ ] 風格運算子**（見 §8.5）：`-eq`, `-ne`, `-lt`, `-le`, `-gt`, `-ge` 數值比較；`-e`/`-f`/`-d` 檔案存在/一般檔/目錄；`-r`/`-w`/`-x` 可讀/可寫/可執行；`-o`（OR）、`-a`（AND），由 conditional.eval 支援
+- **邏輯**：`-o`（OR）、`-a`（AND），如 `[[ -e /etc -a -d /etc ]]`
 
 #### 8.2 字串判斷
 
 - `[[ -z 字串A ]]`：空字串為真
 - `[[ -n 字串A ]]`：非空字串為真
 
-#### 8.3 檔案條件
+#### 8.3 檔案條件（[[ ]] 與 [ ] 皆可用）
 
 - `[[ -e 檔案 ]]`：存在
 - `[[ -f 檔案 ]]`：一般檔
 - `[[ -d 檔案 ]]`：目錄
-- `[[ -r / -w / -x 檔案 ]]`：可讀、可寫、可執行（conditional.eval，供 `[ ]` / `test` 使用）
+- `[[ -r / -w / -x 檔案 ]]`：可讀、可寫、可執行
+- 路徑外層可加引號，變數會展開，如 `[[ -e "$HOME" ]]`
 
 #### 8.4 正則比對
 
@@ -174,6 +178,12 @@
 - **`>`**：輸出覆蓋寫入檔案（`O_WRONLY | O_CREAT | O_TRUNC`）
 - **`>>`**：輸出追加寫入檔案（`O_WRONLY | O_CREAT | O_APPEND`）
 - **`<`**：標準輸入從檔案讀取（`O_RDONLY`）
+- **Here Document `<<`**：`cmd << DELIM` 或 `cmd <<DELIM` 後續行直到僅含 `DELIM` 的一行為止，作為命令的 stdin。
+  - **不展開**：`<<'DELIM'` 或 `<<"DELIM"` 時 body 不展開變數（`$VAR`、`$(( ))` 等保持字面）；組 args 時以 `heredocNoExpandBodyRange` 辨識 no-expand heredoc 的 body 區間，該區間 token 不經 expandTokenUntilStable。
+  - **展開**：`<<DELIM`、`<<"DELIM"` 會展開 body 內 `$VAR`、`$(( ))` 等。
+  - **`<<-`**：`<<-DELIM` 或 `<<-'DELIM'` 時會去除 body 與結束行前導 **TAB**（僅 TAB，非空白）；結束符行可含前導 TAB 以利縮排； `needMoreLinesForHeredoc`、 `stripRedirects` 與 `trimLeadingTabs` 支援。
+  - **與 stdout 重定向併用**：`cat <<HERE > out.txt` 等；收集 body 時若遇 `>` / `>>` 且下一 token 非 delimiter 則視為 stdout 重定向並從 body 排除（單一數字下一 token 視為 body 行以免續行提示 `> 1` 被誤判）。
+  - 互動與腳本皆支援，`needMoreLinesForHeredoc` 會持續讀行直到結束符。
 - 重定向符號可出現在命令任意位置（如 `> out ls` 或 `ls > out`）
 - 檔名支援變數展開（如 `ls > $HOME/list.txt`）
 - **外部命令**：使用 `dup2()` 在 fork 後、execve 前設定子行程的 stdin/stdout（`execWithRedirect`）；先嘗試 `execveZ`（系統 environ），失敗再試 `execvpeZ`，若仍失敗則改以 `/bin/sh -c '指令'` 執行，且傳給 sh 的指令字串會依 env_map 做別名展開（例如 `ll /tmp` → `sh -c "ls -l /tmp"`），確保 alias 後的外部命令可正常輸出
@@ -198,7 +208,8 @@
 
 ### 16. Tab 自動補全
 
-- **觸發**：在 readLineWithCursor 循環中捕獲 `\t`（Tab）
+- **觸發**：在 readLineWithCursor 循環中捕獲 `\t`（Tab）；當 `completion_ctx` 為 null 時（例如 heredoc 續行）不觸發補全，改為**插入 TAB 字元**，方便 `<<-'DELIM'` 等輸入縮排。
+- **Heredoc 續行**：若目前累積內容為未結束的 Here Document（`needMoreLinesForHeredoc(merged)` 為 true），續行讀取時傳入 `completion_ctx = null`，使 TAB 插入字元而非補全。
 - **上下文識別**：自游標向左搜尋空白，提取半成品單詞；行首補全指令，非行首補全路徑，`$` 開頭補全變數，`${arr[` 補全陣列索引
 - **指令補全**：搜尋 PATH 執行檔與內建指令（cd、declare、echo、env、eval、export、help、let、printenv、printf、unset、alias、unalias 等），唯一匹配時加空白
 - **路徑補全**：搜尋目前目錄，支援 `~` 展開（如 `cd ~/Doc[TAB]`）；目錄補全後加 `/`，檔案加空白
@@ -259,9 +270,9 @@
 | - | 執行單一命令（(( ))、[[ ]]、[ ]、test、內建、衍生行程）；[ ] 至少 4 參數、test 至少 2 參數時呼叫 conditional.eval；與 redirect 整合 |
 | - | $(( )) 與 (( )) 算術；內建 stock(buy,sell) 函式 |
 | - | 變數展開、賦值、$?、parseConditionalCommand、isAssocArrayAssignment、isArrayAppend、applyAssocArrayAssignment、appendArrayAssignment；parseArrayAssignment/parseArrayAppend 將 `$(...)` 視為單一值 |
-| - | stripRedirects、execWithRedirect（fork+dup2+execve；失敗時 fallback 為 sh -c + 別名展開）、applyForBuiltin、BuiltinRedirectGuard |
+| - | stripRedirects、heredocNoExpandBodyRange、trimLeadingTabs；Heredoc 含 strip_leading_tab；execWithRedirect（fork+dup2+execve；失敗時 fallback 為 sh -c + 別名展開）、applyForBuiltin、BuiltinRedirectGuard |
 | - | extractWord、getCommandCompletions、getPathCompletions、getVariableCompletions、getArrayIndexCompletions、commonPrefix |
-| - | readLineWithCursor、方向鍵、Backspace、Tab 補全；多行歷史壓成單行（flattenMultilineToSingle、flattenHistoryInPlace、lineEndsWithThenOrDo） |
+| - | readLineWithCursor、方向鍵、Backspace、Tab 補全（completion_ctx 為 null 時 TAB 插入字元）；多行歷史壓成單行（flattenMultilineToSingle、flattenHistoryInPlace、lineEndsWithThenOrDo） |
 | - | 命令歷史與上下鍵導覽 |
 | - | isBuiltin、cd、echo、export、env、printenv、unset、declare、alias、unalias、stock 分發 |
 | - | expandPrompt、getPrompt；PS1 跳脫序列 \u \h \w \$ \n \e \[ \] 等；fillEmptyBrackets、dedupeConsecutiveBracketSegments、replaceFirstBracketWithX（失敗 [X]，保留 [✗]） |
@@ -364,6 +375,27 @@ echo append >> /tmp/test_out
 cat < /tmp/test_out
 ls > /tmp/ls_out; wc -l < /tmp/ls_out
 export X=1; printenv X > /tmp/env_out
+
+# Here Document（<<、<<'DELIM' 不展開、<<- 去前導 TAB、與 > 併用）
+cat <<HERE
+1
+2
+3
+HERE
+cat <<'HERE'
+1
+2
+$HOME
+HERE
+cat <<HERE > /tmp/heredoc_out
+a
+b
+HERE
+cat /tmp/heredoc_out
+cat <<-'HERE'
+	line1
+	line2
+	HERE
 
 # PS1 提示與 ANSI
 export PS1='\u@\h:\w\$ '
