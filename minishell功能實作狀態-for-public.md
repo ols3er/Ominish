@@ -75,7 +75,7 @@
 
 - **[[ ]] 與 [ ] / test 使用同一套 conditional.eval**，故下列運算子在 `[[ ... ]]` 中皆可用。
 
-#### 8.1 二元比較
+#### 8.1 二元比較（字串／數值）
 
 - **運算符**：`=`, `==`, `!=`, `<`, `>`, `<=`, `>=`
 - **數值比較（[ ] 風格）**：`[[ 1 -eq 1 ]]`、`-ne`、`-lt`、`-le`、`-gt`、`-ge`
@@ -88,6 +88,7 @@
 
 - `[[ -z 字串A ]]`：空字串為真
 - `[[ -n 字串A ]]`：非空字串為真
+- **單獨字串**：`[[ 字串 ]]` 僅一個運算元、無 `=` / `!=` / `<` / `>` 等時，先去除外層引號、再展開變數，**長度不為 0 則為真**，空字串為假；如 `[[ abc ]]`、`[[ $x ]]` 為真，`[[ "" ]]`、`[[   ]]` 為假
 
 #### 8.3 檔案條件（[[ ]] 與 [ ] 皆可用）
 
@@ -133,7 +134,7 @@
 - 賦值：`VAR=value`
 - **SHELL**：進入 ominish 時自動設為執行檔的絕對路徑（經 `std.fs.selfExePathAlloc` 取得）
 - **EUID**：進入時自動設為 `geteuid()` 數值，供 `${EUID}` 與 `[[ ${EUID} == 0 ]]`（是否 root）使用
-- **陣列**：`arr=(val1 val2 val3)`；`$arr` 或 `${arr[0]}` 取首元素；`${arr[n]}` 取第 n 個；`${arr[@]}` 展開全部；`${#arr}` 取長度
+- **陣列**：`arr=(val1 val2 val3)`；`$arr` 或 `${arr[0]}` 取首元素；`${arr[n]}` 取第 n 個；`${arr[@]}` 展開全部；`${#arr}`、**`${#arr[@]}`** 取陣列元素個數（後者以 indexOf("[@]") 取基底名查 `__len`，若為 0 則由迭代 `name__0`、`name__1`… 推算）
 - **陣列＋命令替換**：`files=($(ls /tmp))`、`items=($(echo a b c))` 等可正確解析；tokenizer 與 parseArrayAssignment 皆將 `$(...)` 視為一整組，不在命令內空白處分割
 - **陣列追加**：`arr+=(val4 val5)` 將新元素追加到既有陣列
 - **關聯陣列**：`declare -A map` 宣告；`map[key]=value` 賦值；`${map[key]}` 取值；`${map[@]}` 展開所有值；`${#map}` 取元素個數
@@ -167,6 +168,7 @@
 - **stock**：`stock 買入價 賣出價` 計算股票收益（手續費 0.1425%、交易稅 0.3%、每張 1000 股）；`stock(100,110)` 單獨指令或 `$(( stock(100,110) ))` 僅輸出收益數值
 - **help**：`help` 列出所有內建指令與簡短用法；`help 指令名` 只顯示該指令；無此內建時印出「無此內建指令」
 - **printf**：支援 %s %d %i %u %x %X %o %f %e %E %g %G %c %% %b %q %Q 等；**width**：%d/%i/%u/%x/%X/%o/%f 支援左側補空白（如 `printf "%10d" 123456` → `    123456`）；**%f** 支援 precision（如 `%4.2f`）；**%e/%E** 科學記號（%E 大寫）；格式字串無 `\n` 時不自動換行（與 bash 一致）；`%%` 搭配多餘參數時不重複輸出、不無限迴圈；%q 可做 shell 可重用輸出
+- **mapfile** / **readarray**：從 stdin 或 `-u fd` 讀取行到索引陣列；預設陣列名 `MAPFILE`。選項：`-d delim`（行結束字元，空字串為 NUL）、`-n count`（最多讀 count 行，0 為不限制）、`-O origin`（從索引 origin 開始寫入）、`-s count`（略過前 count 行）、`-t`（移除每行結尾的 delim）、`-u fd`（從指定 fd 讀取）。未給 `-O` 時會先清空陣列再寫入；目標須為索引陣列（不可為關聯陣列）。內建會對 `-O` 參數再做變數展開；若 `-O` 為 0 且目標陣列已有內容則改為從目前長度 append（避免 `${#arr[@]}` 未正確展開時覆寫）。`-C callback` / `-c quantum` 尚未實作。
 - **eval**：`eval arg1 arg2 ...` 將參數以空白連接後重新解析執行；支援二次展開、&&/||、if/while/for；遞迴深度限制 16；狀態變更影響當前 Shell
 - **source** / **`.`**：`source 路徑` 或 `. 路徑` 於當前 shell 讀取並執行腳本或 init 設定檔（如 `source ~/.ominishrc`、`. ~/.ominishrc`）；支援 ~ 與變數展開
   - 單雙引號皆支援：`eval "x=1; echo $x"`、`eval 'x=1; echo $x'` → 輸出 `1`
@@ -188,21 +190,24 @@
 - 檔名支援變數展開（如 `ls > $HOME/list.txt`）
 - **外部命令**：使用 `dup2()` 在 fork 後、execve 前設定子行程的 stdin/stdout（`execWithRedirect`）；先嘗試 `execveZ`（系統 environ），失敗再試 `execvpeZ`，若仍失敗則改以 `/bin/sh -c '指令'` 執行，且傳給 sh 的指令字串會依 env_map 做別名展開（例如 `ll /tmp` → `sh -c "ls -l /tmp"`），確保 alias 後的外部命令可正常輸出
 - **內建指令**：使用 `dup()` 保存原 fd、`dup2()` 套用重定向、執行內建、`restore()` 恢復（`applyForBuiltin` + `BuiltinRedirectGuard`）
+- **內建路徑**： 在直接執行內建（未經 executor）時也會對 args 做 `stripRedirects`、`applyForBuiltin`，故 `mapfile myarr < file.txt`、`echo x > out` 等可正確從檔案讀取／寫出，不會卡住或讀到終端 stdin
 - 新建檔案權限 0644；重定向失敗時 `$?` 為非 0
 - **注意**：`>`、`>>`、`<` 與檔名之間需有空白（例如 `ls > out`）；`ls>out` 尚未支援
-- **內建指令支援重定向**：`echo hello > out`、`echo x >> log`、`printenv VAR > env.txt`、`export VAR=val > env.txt` 等皆可
+- **內建指令支援重定向**：`echo hello > out`、`echo x >> log`、`printenv VAR > env.txt`、`export VAR=val > env.txt`、`mapfile -t arr < file.txt` 等皆可
 
 ### 14. 行編輯與歷史
 
 - **Raw 模式**：關閉 ICANON、ECHO，逐字讀取
-- **左右方向鍵**：ESC [ C / ESC [ D，游標移動
-- **Backspace / DEL**：刪除游標前一字元
+- **左右方向鍵**：ESC [ C / ESC [ D，游標以 **UTF-8 字元**為單位移動（`prevUtf8Start` / `nextUtf8Len`）；多位元組時重繪整行
+- **Backspace / DEL**：刪除游標前**整顆 UTF-8 字元**（`prevUtf8Start`），多國語言下不會只刪一半造成亂碼
+- **多國語言／顯示欄寬**：重繪時游標位移依 **utf8DisplayWidth**（ASCII=1、多位元組=2）計算，避免以位元組數移動導致游標跑進 prompt（如「└」）
 - **上下鍵**：歷史導覽（getPrevious / getNext）；叫出多行歷史時會壓成單行顯示（`flattenMultilineToSingle` / `flattenHistoryInPlace`）：各行以 `"; "` 相接，若換行前是 `then` 或 `do` 則只加一空格，避免產生 `then;` 導致 shell 解析錯誤
 - 非 TTY 時自動改用 readUntilDelimiterOrEof
 
 ### 15. Backspace 處理
 
-- 僅在 move_left > 0 時送出 `\x1b[{n}D`
+- 多國語言下依 **prevUtf8Start** 刪除整顆 UTF-8 字元（非單 byte）
+- 重繪時 `move_left` 以 **utf8DisplayWidth(buffer[cursor..len])** 計算，與終端欄寬一致
 - termios 僅關閉 ICANON 與 ECHO
 - just_backspace 保留以略過 BS+SP 序列中夾帶的 space
 
@@ -266,13 +271,13 @@
 | - | expandGlob、expandArgsGlob；萬用字元 * ? [abc] 比對與展開 |
 | - | [[ ]] 求值：二元比較、-z/-n、-e/-f/-d/-r/-w/-x、-eq/-ne/-lt/-le/-gt/-ge、-o/-a、=~ regex、glob |
 | - | Perl-style regex 比對 |
-| - | REPL 主迴圈、TrackingWriter（追蹤輸出最後位元組）、runCommandBody、runPipeline、processStatements、if/while/for 塊處理、eval、break/continue；執行前對參數做 glob 展開 |
+| - | REPL 主迴圈、TrackingWriter（追蹤輸出最後位元組）、runCommandBody、runPipeline、processStatements、if/while/for 塊處理、eval、break/continue；執行前對參數做 glob 展開；**內建路徑**對 args 做 stripRedirects、applyForBuiltin 後再 runBuiltin（mapfile \< file 等可正確重定向） |
 | - | 執行單一命令（(( ))、[[ ]]、[ ]、test、內建、衍生行程）；[ ] 至少 4 參數、test 至少 2 參數時呼叫 conditional.eval；與 redirect 整合 |
 | - | $(( )) 與 (( )) 算術；內建 stock(buy,sell) 函式 |
-| - | 變數展開、賦值、$?、parseConditionalCommand、isAssocArrayAssignment、isArrayAppend、applyAssocArrayAssignment、appendArrayAssignment；parseArrayAssignment/parseArrayAppend 將 `$(...)` 視為單一值 |
+| - | 變數展開、賦值、$?、parseConditionalCommand、isAssocArrayAssignment、isArrayAppend、applyAssocArrayAssignment、appendArrayAssignment；**${#arr[@]}** 陣列長度（indexOf("[@]") 取基底名、__len 或迭代 name__N 推算）；parseArrayAssignment/parseArrayAppend 將 `$(...)` 視為單一值 |
 | - | stripRedirects、heredocNoExpandBodyRange、trimLeadingTabs；Heredoc 含 strip_leading_tab；execWithRedirect（fork+dup2+execve；失敗時 fallback 為 sh -c + 別名展開）、applyForBuiltin、BuiltinRedirectGuard |
 | - | extractWord、getCommandCompletions、getPathCompletions、getVariableCompletions、getArrayIndexCompletions、commonPrefix |
-| - | readLineWithCursor、方向鍵、Backspace、Tab 補全（completion_ctx 為 null 時 TAB 插入字元）；多行歷史壓成單行（flattenMultilineToSingle、flattenHistoryInPlace、lineEndsWithThenOrDo） |
+| - | readLineWithCursor、方向鍵、Backspace、Tab 補全（completion_ctx 為 null 時 TAB 插入字元）；**多國語言**：prevUtf8Start、nextUtf8Len、utf8DisplayWidth；Backspace 刪整字元、左右鍵以字元移動、重繪依顯示欄寬；多行歷史壓成單行（flattenMultilineToSingle、flattenHistoryInPlace、lineEndsWithThenOrDo） |
 | - | 命令歷史與上下鍵導覽 |
 | - | isBuiltin、cd、echo、export、env、printenv、unset、declare、alias、unalias、stock 分發 |
 | - | expandPrompt、getPrompt；PS1 跳脫序列 \u \h \w \$ \n \e \[ \] 等；fillEmptyBrackets、dedupeConsecutiveBracketSegments、replaceFirstBracketWithX（失敗 [X]，保留 [✗]） |
