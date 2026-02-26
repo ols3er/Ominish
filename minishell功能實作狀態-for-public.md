@@ -163,12 +163,15 @@
 - **unalias**：`unalias name` 移除別名；`unalias -a` 移除全部
 - 別名以 `__alias__name` 為 key 存於 env_map；`alias ll='ls -l'` 後執行 `ll /tmp` 會以 `ls -l /tmp` 之行為執行並正常列出目錄
 - **別名查表前 WTF-8 檢查**：`getAlias` 在呼叫 `env_map.get(key)` 前會以 `std.unicode.wtf8ValidateSlice(name)` 檢查第一個詞是否為合法 WTF-8；若否（例如在 prompt 貼上 emoji 後用 Backspace 刪到不完整 UTF-8 位元組），直接回傳 null、不查表，避免 `env_map.get` 因 key 非法而 panic，該輸入改當一般指令處理。
-- **declare**：`declare -A name` 宣告關聯陣列；`declare -i name [name=expr ...]` 宣告整數變數（可多個名稱，或 `name=expr` 同時賦值，expr 以算術求值）
+- **declare**：`declare -A name` 宣告關聯陣列；`declare -a name` 宣告空索引陣列；`declare -i name [name=expr ...]` 宣告整數變數（可多個名稱，或 `name=expr` 同時賦值，expr 以算術求值）；`declare -r name=val` 唯讀（後續賦值或 unset 會失敗）；`declare -l`/`-u` 指派時轉小寫/大寫；`declare -x` 標記為導出；`declare -p [VAR...]` 顯示變數屬性與值（無名稱則列 env_map 中不含 `__` 的鍵）；`declare +i`/`+r`/`+x` 移除對應屬性；`declare -g` 在函式內仍寫入 env_map；`declare -I` 在函式內建立 local 時從 env_map 複製同名變數值與屬性。單元測試涵蓋 -A、-i、-r、-l/-u、-a、-p、+i、唯讀賦值錯誤、-g/local_frame。
 - **let**：`let expr [expr ...]` 將每個參數當作算術表達式求值（支援 `=`、`+=`、`-=` 等）；最後一個結果非 0 則 exit 0，否則 1；例：`let sum+=1`、`let i=1 j=2`
 - **stock**：`stock 買入價 賣出價` 計算股票收益（手續費 0.1425%、交易稅 0.3%、每張 1000 股）；`stock(100,110)` 單獨指令或 `$(( stock(100,110) ))` 僅輸出收益數值
 - **help**：`help` 列出所有內建指令與簡短用法；`help 指令名` 只顯示該指令；無此內建時印出「無此內建指令」
 - **printf**：支援 %s %d %i %u %x %X %o %f %e %E %g %G %c %% %b %q %Q 等；**width**：%d/%i/%u/%x/%X/%o/%f 支援左側補空白（如 `printf "%10d" 123456` → `    123456`）；**%f** 支援 precision（如 `%4.2f`）；**%e/%E** 科學記號（%E 大寫）；格式字串無 `\n` 時不自動換行（與 bash 一致）；`%%` 搭配多餘參數時不重複輸出、不無限迴圈；%q 可做 shell 可重用輸出
 - **mapfile** / **readarray**：從 stdin 或 `-u fd` 讀取行到索引陣列；預設陣列名 `MAPFILE`。選項：`-d delim`（行結束字元，空字串為 NUL）、`-n count`（最多讀 count 行，0 為不限制）、`-O origin`（從索引 origin 開始寫入）、`-s count`（略過前 count 行）、`-t`（移除每行結尾的 delim）、`-u fd`（從指定 fd 讀取）。未給 `-O` 時會先清空陣列再寫入；目標須為索引陣列（不可為關聯陣列）。內建會對 `-O` 參數再做變數展開；若 `-O` 為 0 且目標陣列已有內容則改為從目前長度 append（避免 `${#arr[@]}` 未正確展開時覆寫）。`-C callback` / `-c quantum` 尚未實作。
+- **read**：從標準輸入或 `-u fd` 讀取一列（或依 `-d` 分隔符、`-n`/`-N` 字元數），依 **IFS** 分割後指派給 NAME 或 **REPLY**（無 NAME 時）。選項：`-a array`（指派給索引陣列）、`-d delim`（讀到 delim 為止）、`-n nchars`（讀滿 nchars 或遇分隔符即回傳）、`-N nchars`（精確讀 nchars 字元）、`-p prompt`（先輸出提示）、`-r`（不處理反斜線跳脫）、`-s`（不顯示輸入）、`-t timeout`（逾時秒數，逾時回傳碼 >128）、`-u fd`（從指定 fd 讀取）。最後一個 NAME 取得剩餘全部字詞；函式內執行時賦值遵從 local 作用範圍。
+- **local**：僅能在**函式內**使用；`local VAR` 或 `local NAME=value` 宣告函式內私有變數，與全域同名變數分開；函式外呼叫會報錯「只能在函式內使用」並回傳 1。
+- **shift**：`shift [n]` 將位置參數往前移（預設 n=1）；`$2`→`$1`、`$3`→`$2`…，`$#` 減 n；若 n≥`$#` 則全部移掉、`$#` 變 0；無效的 n 回傳 1。
 - **eval**：`eval arg1 arg2 ...` 將參數以空白連接後重新解析執行；支援二次展開、&&/||、if/while/for；遞迴深度限制 16；狀態變更影響當前 Shell
 - **source** / **`.`**：`source 路徑` 或 `. 路徑` 於當前 shell 讀取並執行腳本或 init 設定檔（如 `source ~/.ominishrc`、`. ~/.ominishrc`）；支援 ~ 與變數展開
   - 單雙引號皆支援：`eval "x=1; echo $x"`、`eval 'x=1; echo $x'` → 輸出 `1`
@@ -260,6 +263,7 @@
 - **機制**：使用  內建 test runner，以 `src/` 為根編譯測試執行檔，會自動收集並執行所有依賴模組內的 `test "描述" { ... }` 區塊
 - **範例**：`` 內有 `isValidVarName`、`findAssignmentEq` 的測試；`` 內有 `splitCommands` 的測試（含引號內不分割 `;`）
 - **撰寫**：在任意 `src .` 中加上 `test "名稱" { try std.testing.expect(...); }` 即可，該模組被 main 依賴鏈引用時，其測試會被一併執行
+- **內建指令**：echo、alias、export、unset、printenv、clear、**declare**（-A、-i、-r、-l/-u、-a、-p、+i、-g/local_frame）、**let**、pwd、stock、cd、env、exit、**help**、printf、**mapfile**、**read**、**local**、**shift** 等皆已有單元測試（見 測試對應表.md）
 
 ---
 
