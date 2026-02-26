@@ -178,6 +178,18 @@
   - `a=b; b=10; eval echo '$'$a` → 輸出 `10`
   - exit：exit [n] 結束 shell，n 省略則用 $?
 
+#### 12.5 Shell 函式
+
+- **定義語法**：`name () { body }` 或 `function name [()] { body }`；名稱須為合法變數名（字母數字底線），body 為大括號內命令（可多行，換行會正規成空白）。多行輸入時以 `> ` 提示續行直到 `}` 配對完成（`needMoreLinesForFunction`）。
+- **儲存**：函式本體以 key `__func__<name>` 存於 env_map；`functions.setFunction` / `getFunction` / `removeFunction` 負責存取與刪除。
+- **呼叫**：命令第一個詞若為已定義函式名（且非內建），則不執行外部程式，改為在當前 shell 內執行函式 body；執行前會先做重定向 strip、再以 strip 後的參數設定 **位置參數**（`$0`、`$1`…、`$#`），執行完後還原原來的 `$0`～`$64`、`$#`。
+- **函式內變數**：執行 body 時會建立獨立的 **local_frame**（函式區域變數表）；`local`、`declare`（未加 `-g`）、`read` 的賦值寫入此 local_frame，與全域 env_map 分開；函式結束後 local_frame 丟棄。
+- **`declare -g`**：在函式內使用 `declare -g VAR=value` 時，變數寫入 env_map，函式外仍可見。
+- **`declare -I`**：在函式內使用 `declare -I VAR` 時，會從 env_map 複製同名變數的值與屬性（如整數、唯讀）到 local_frame，再於後續賦值時使用。
+- **位置參數**：函式內 `$1`、`$2`… 為呼叫時傳入的參數，`$#` 為參數個數（不含命令名）；與內建、外部命令同一套展開邏輯。
+- **重定向**：呼叫函式時可帶重定向，如 `myfunc arg1 < input > output`；body 執行前會套用這些重定向。
+- **與內建關係**：`local`、`declare`、`read`、`shift` 等在函式內執行時會收到 `local_frame`，行為如上述；break/continue 在函式內同樣僅在迴圈內有效。
+
 ### 13. I/O 重定向
 
 - **`>`**：輸出覆蓋寫入檔案（`O_WRONLY | O_CREAT | O_TRUNC`）
@@ -271,11 +283,11 @@
 
 | 模組 | 主要功能 |
 |------|----------|
-| - | stripComments, splitByLogic, splitByPipeline, parseIfBlock, parseWhileBlock, parseForBlock, splitCommands, tokenizeWithQuotes（陣列賦值延伸時跳過 `$(...)`） |
+| - | stripComments, splitByLogic, splitByPipeline, parseIfBlock, parseWhileBlock, parseForBlock, **parseFunctionBlock**、**needMoreLinesForFunction**（函式定義），splitCommands, tokenizeWithQuotes（陣列賦值延伸時跳過 `$(...)`） |
 | - | expandGlob、expandArgsGlob；萬用字元 * ? [abc] 比對與展開 |
 | - | [[ ]] 求值：二元比較、-z/-n、-e/-f/-d/-r/-w/-x、-eq/-ne/-lt/-le/-gt/-ge、-o/-a、=~ regex、glob |
 | - | Perl-style regex 比對 |
-| - | REPL 主迴圈、TrackingWriter（追蹤輸出最後位元組）、runCommandBody、runPipeline、processStatements、if/while/for 塊處理、eval、break/continue；執行前對參數做 glob 展開；**內建路徑**對 args 做 stripRedirects、applyForBuiltin 後再 runBuiltin（mapfile \< file 等可正確重定向） |
+| - | REPL 主迴圈、TrackingWriter（追蹤輸出最後位元組）、runCommandBody、runPipeline、processStatements、if/while/for 塊處理、**函式定義與呼叫**（getFunction、local_frame、位置參數 $1…$#）、eval、break/continue；執行前對參數做 glob 展開；**內建路徑**對 args 做 stripRedirects、applyForBuiltin 後再 runBuiltin（mapfile \< file 等可正確重定向） |
 | - | 執行單一命令（(( ))、[[ ]]、[ ]、test、內建、衍生行程）；[ ] 至少 4 參數、test 至少 2 參數時呼叫 conditional.eval；與 redirect 整合 |
 | - | $(( )) 與 (( )) 算術；內建 stock(buy,sell) 函式 |
 | - | 變數展開、賦值、$?、parseConditionalCommand、isAssocArrayAssignment、isArrayAppend、applyAssocArrayAssignment、appendArrayAssignment；**${#arr[@]}** 陣列長度（indexOf("[@]") 取基底名、__len 或迭代 name__N 推算）；parseArrayAssignment/parseArrayAppend 將 `$(...)` 視為單一值 |
@@ -283,6 +295,7 @@
 | - | extractWord、getCommandCompletions、getPathCompletions、getVariableCompletions、getArrayIndexCompletions、commonPrefix |
 | - | readLineWithCursor、方向鍵、Backspace、Tab 補全（completion_ctx 為 null 時 TAB 插入字元）；**多國語言**：prevUtf8Start、nextUtf8Len、utf8DisplayWidth；Backspace 刪整字元、左右鍵以字元移動、重繪依顯示欄寬；多行歷史壓成單行（flattenMultilineToSingle、flattenHistoryInPlace、lineEndsWithThenOrDo） |
 | - | 命令歷史與上下鍵導覽 |
+| - | getFunction、setFunction、removeFunction；函式本體以 `__func__<name>` 存於 env_map |
 | - | isBuiltin、cd、echo、export、env、printenv、unset、declare、alias、unalias、stock 分發 |
 | - | expandPrompt、getPrompt；PS1 跳脫序列 \u \h \w \$ \n \e \[ \] 等；fillEmptyBrackets、dedupeConsecutiveBracketSegments、replaceFirstBracketWithX（失敗 [X]，保留 [✗]） |
 
@@ -366,6 +379,13 @@ files=($(ls /tmp)); echo ${#files}; echo ${files[@]}
 # 關聯陣列
 declare -A map; map[a]=1; map[b]=2; echo ${map[a]} ${map[b]}
 echo ${map[@]}
+
+# Shell 函式（定義、呼叫、local、位置參數）
+myecho () { echo "args: $1 $2"; }
+myecho hello world
+function greet { echo "Hi $1"; }
+greet user
+f () { local x=1; echo $x; declare -g y=2; }; f; echo $y
 
 eval echo hello
 eval "cd .."
