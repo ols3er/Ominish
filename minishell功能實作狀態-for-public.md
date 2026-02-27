@@ -2,6 +2,8 @@
 
 本文件整理目前 ominish 已實作的各項功能。
 
+**今日工作重點（2025-02-17）**：Heredoc 變數改為執行時展開（`redirect.heredocBodyRange` + args_list 用原始 token，執行前對 body 做 `expandVariables`）；`<<'HERE'`（無 `-`）在 batch 模式保留 body 前導 TAB（`normalizeScriptLines` 在 heredoc 內不 trim）。詳見 §13。
+
 ---
 
 ## 一、已實作功能
@@ -43,6 +45,14 @@
 - 支援多行：換行輸入，以 `> ` 提示繼續；`needMoreLinesForBlock` 與 REPL 皆會辨識 `for ((` 並累積至完整區塊
 - init / condition / update 為算術表達式，支援賦值（`=`）與變數；變數可先用 `declare -i` 宣告整數，body 內可用 `let sum+=1` 等
 - break / continue 於此 for 內同樣有效
+
+### 4.6 流程控制：case ... in ... esac
+
+- 語法：`case WORD in [ [(] pattern [ | pattern ] ... ) list ;; ] ... esac`
+- 依 WORD（可變數展開）與 pattern 做 **glob 比對**（`*` `?` `[ ]`），第一個匹配的 clause 執行對應 list，結束狀態為該 list 最後執行指令的 exit status
+- 支援單行：`case $x in a) echo A ;; b|c) echo B ;; *) echo default ;; esac`
+- 支援多行：換行輸入，以 `> ` 提示繼續；`needMoreLinesForBlock` 與 REPL 皆會辨識 `case ` 並累積至完整 `esac`
+- 歷史召回：多行 case 壓成單行時，`in` 後的換行改為空白（與 then/do 相同），由 line_editor 的 `lineEndsWithThenOrDo` 辨識行尾 `in`，不插入 `;`
 
 ### 5. break 與 continue
 
@@ -197,7 +207,8 @@
 - **`<`**：標準輸入從檔案讀取（`O_RDONLY`）
 - **Here Document `<<`**：`cmd << DELIM` 或 `cmd <<DELIM` 後續行直到僅含 `DELIM` 的一行為止，作為命令的 stdin。
   - **不展開**：`<<'DELIM'` 或 `<<"DELIM"` 時 body 不展開變數（`$VAR`、`$(( ))` 等保持字面）；組 args 時以 `heredocNoExpandBodyRange` 辨識 no-expand heredoc 的 body 區間，該區間 token 不經 expandTokenUntilStable。
-  - **展開**：`<<DELIM`、`<<"DELIM"` 會展開 body 內 `$VAR`、`$(( ))` 等。
+  - **展開**：`<<DELIM`、`<<"DELIM"` 會展開 body 內 `$VAR`、`$(( ))` 等；**執行時才展開**（組 args 時以 `heredocBodyRange` 對**所有** heredoc body 使用原始 token，傳給 stripRedirects 後再於執行前對 body 做 `expandVariables`），故迴圈內如 `for i in 1 2 3; do cat <<HERE\necho $i\nHERE; done` 會正確輸出 1、2、3。
+  - **前導 TAB**：**無 `-`**（`<<'HERE'`）時，batch 模式透過 `normalizeScriptLines` 在 heredoc 內不 trim 該行，僅 strip 行尾 `\r\n`，故 body 前導 TAB 保留；**有 `-`**（`<<-'DELIM'`）時由  `stripRedirects` 與 `trimLeadingTabs` 去除 body 與結束行前導 TAB； `needMoreLinesForHeredoc` 支援。
   - **`<<-`**：`<<-DELIM` 或 `<<-'DELIM'` 時會去除 body 與結束行前導 **TAB**（僅 TAB，非空白）；結束符行可含前導 TAB 以利縮排； `needMoreLinesForHeredoc`、 `stripRedirects` 與 `trimLeadingTabs` 支援。
   - **與 stdout 重定向併用**：`cat <<HERE > out.txt` 等；收集 body 時若遇 `>` / `>>` 且下一 token 非 delimiter 則視為 stdout 重定向並從 body 排除（單一數字下一 token 視為 body 行以免續行提示 `> 1` 被誤判）。
   - 互動與腳本皆支援，`needMoreLinesForHeredoc` 會持續讀行直到結束符。
@@ -264,6 +275,14 @@
 - **僅互動模式顯示橫幅**：「Loaded .ominish_profile」「Loaded .ominishrc」與「OB2D Linux minishell」僅在 **stdin 為 TTY（互動模式）** 時顯示，且每 process 只顯示一次；管線或重定向 stdin（如 `echo 'echo test' | ./ominish`）時不顯示上述橫幅。
 - **非互動模式不顯示 prompt**：stdin 非 TTY 時不輸出 prompt（多行橫幅與 `└╼$>` 等），僅輸出命令結果；且空 prompt 時不進行「從輸入剝除 prompt」的處理，避免無限迴圈並正確在 EOF 結束。
 
+### 19.5 Batch 模式
+
+- **觸發條件**：`ominish script_path [arg1 arg2 ...]` 或經 shebang 執行（`#! /path/to/ominish`）時，`` 以 `argv.len >= 2` 判定為 batch，呼叫 `shell.runBatch(script_path, script_args, ...)`，不進入互動 REPL。
+- **位置參數**：`runBatch` 會設定 `$0`＝腳本路徑、`$1`～`$n`＝傳入參數、`$#`＝參數個數，供腳本內使用。
+- **不載入設定檔**：batch 時不讀取 `~/.ominish_profile`、`~/.ominishrc`；不顯示「Loaded ...」與「OB2D Linux minishell」橫幅，也不輸出 prompt。
+- **腳本正規化**：整份腳本讀入後經 `normalizeScriptLines` 處理：跳過 shebang；行與行之間依關鍵字（do/done、then/else/fi 等）用空格或 `;` 銜接；**heredoc 內**不 trim，僅 strip 行尾 `\r\n`，以保留前導 TAB（除非使用 `<<-'DELIM'`，由 redirect 端去除 TAB）。正規化後字串一次交給 `processStatements`，與互動模式共用同一執行核心。
+- **結束狀態**：腳本執行完畢後回傳 `$?`；若腳本內執行 `exit [n]` 則回傳該 `n`。詳見 **BATCH_AND_INTERACTIVE_STRUCTURE.md**。
+
 ### 20. 模組化架構
 
 - 指令與職責拆至不同模組（見 PROJECT_STRUCTURE.md）
@@ -291,7 +310,7 @@
 | - | 執行單一命令（(( ))、[[ ]]、[ ]、test、內建、衍生行程）；[ ] 至少 4 參數、test 至少 2 參數時呼叫 conditional.eval；與 redirect 整合 |
 | - | $(( )) 與 (( )) 算術；內建 stock(buy,sell) 函式 |
 | - | 變數展開、賦值、$?、parseConditionalCommand、isAssocArrayAssignment、isArrayAppend、applyAssocArrayAssignment、appendArrayAssignment；**${#arr[@]}** 陣列長度（indexOf("[@]") 取基底名、__len 或迭代 name__N 推算）；parseArrayAssignment/parseArrayAppend 將 `$(...)` 視為單一值 |
-| - | stripRedirects、heredocNoExpandBodyRange、trimLeadingTabs；Heredoc 含 strip_leading_tab；execWithRedirect（fork+dup2+execve；失敗時 fallback 為 sh -c + 別名展開）、applyForBuiltin、BuiltinRedirectGuard |
+| - | stripRedirects、**heredocBodyRange**（任一 heredoc body 索引範圍）、heredocNoExpandBodyRange、trimLeadingTabs；Heredoc 含 strip_leading_tab；execWithRedirect（fork+dup2+execve；失敗時 fallback 為 sh -c + 別名展開）、applyForBuiltin、BuiltinRedirectGuard |
 | - | extractWord、getCommandCompletions、getPathCompletions、getVariableCompletions、getArrayIndexCompletions、commonPrefix |
 | - | readLineWithCursor、方向鍵、Backspace、Tab 補全（completion_ctx 為 null 時 TAB 插入字元）；**多國語言**：prevUtf8Start、nextUtf8Len、utf8DisplayWidth；Backspace 刪整字元、左右鍵以字元移動、重繪依顯示欄寬；多行歷史壓成單行（flattenMultilineToSingle、flattenHistoryInPlace、lineEndsWithThenOrDo） |
 | - | 命令歷史與上下鍵導覽 |
