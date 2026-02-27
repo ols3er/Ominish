@@ -2,7 +2,10 @@
 
 本文件整理目前 ominish 已實作的各項功能。
 
-**今日工作重點（2025-02-17）**：Heredoc 變數改為執行時展開（`redirect.heredocBodyRange` + args_list 用原始 token，執行前對 body 做 `expandVariables`）；`<<'HERE'`（無 `-`）在 batch 模式保留 body 前導 TAB（`normalizeScriptLines` 在 heredoc 內不 trim）。詳見 §13。
+**今日工作重點（2025-02-17）**：
+
+- Batch mode（腳本批次執行模式）。詳見§19.5。
+- Heredoc 變數改為執行時展開（`redirect.heredocBodyRange` + args_list 用原始 token，執行前對 body 做 `expandVariables`）；`<<'HERE'`（無 `-`）在 batch 模式保留 body 前導 TAB（`normalizeScriptLines` 在 heredoc 內不 trim）。詳見 §13。
 
 ---
 
