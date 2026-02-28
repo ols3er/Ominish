@@ -2,10 +2,13 @@
 
 本文件整理目前 ominish 已實作的各項功能。
 
-**今日工作重點（2025-02-17）**：
+**今日工作重點（2025-03-01）**：
 
 - Batch mode（腳本批次執行模式）。詳見§19.5。
 - Heredoc 變數改為執行時展開（`redirect.heredocBodyRange` + args_list 用原始 token，執行前對 body 做 `expandVariables`）；`<<'HERE'`（無 `-`）在 batch 模式保留 body 前導 TAB（`normalizeScriptLines` 在 heredoc 內不 trim）。詳見 §13。
+- **Here string `<<<`**：支援 `cmd <<< "string"`，下一 token 作為 stdin 內容（）；lexer/shell 不將 `<<<` 當成 heredoc；若 token 被拆成 `<<` 與 `<`，stripRedirects 會合併為 here string 處理；缺目標時略過不報錯。詳見 §13。
+- **read 內建**：支援合併短選項（如 `-ra` 為 `-r` + `-a`），builtins/ 逐字解析選項。
+- **腳本正規化**：行內含 `<<<` 時不設 `skip_next_sep`，下一行保持為獨立指令，使 `read -ra arr <<< "a:b:c"` 與下一行 `echo ...` 正確分成兩條命令（IFS-2.sh、IFS.sh 可正確執行）。
 
 ---
 
@@ -208,6 +211,7 @@
 - **`>`**：輸出覆蓋寫入檔案（`O_WRONLY | O_CREAT | O_TRUNC`）
 - **`>>`**：輸出追加寫入檔案（`O_WRONLY | O_CREAT | O_APPEND`）
 - **`<`**：標準輸入從檔案讀取（`O_RDONLY`）
+- **Here string `<<<`**：`cmd <<< "string"` 將下一 token 的內容（加換行）作為命令的 stdin；lexer/shell 辨識 `<<<` 時不當成 heredoc；若 tokenizer 產出 `<<` 與 `<`，stripRedirects 會合併為 here string 並以再下一 token 為內容。
 - **Here Document `<<`**：`cmd << DELIM` 或 `cmd <<DELIM` 後續行直到僅含 `DELIM` 的一行為止，作為命令的 stdin。
   - **不展開**：`<<'DELIM'` 或 `<<"DELIM"` 時 body 不展開變數（`$VAR`、`$(( ))` 等保持字面）；組 args 時以 `heredocNoExpandBodyRange` 辨識 no-expand heredoc 的 body 區間，該區間 token 不經 expandTokenUntilStable。
   - **展開**：`<<DELIM`、`<<"DELIM"` 會展開 body 內 `$VAR`、`$(( ))` 等；**執行時才展開**（組 args 時以 `heredocBodyRange` 對**所有** heredoc body 使用原始 token，傳給 stripRedirects 後再於執行前對 body 做 `expandVariables`），故迴圈內如 `for i in 1 2 3; do cat <<HERE\necho $i\nHERE; done` 會正確輸出 1、2、3。
